@@ -12,6 +12,11 @@
 # add ntfy.sh to a Custom network allowlist (it is NOT on the Trusted list).
 # Cloud sessions already notify the Claude mobile app, so this is optional there.
 
+# track-edits.py spawns a nested `claude -p` per edit, and that child fires its
+# own Stop hook on exit. Without this guard, editing ten files emits ten spurious
+# "Your turn" notifications.
+[ -z "${CLAUDE_ENV_NESTED:-}" ] || exit 0
+
 event="${1:-event}"
 message="${2:-Claude Code}"
 ts="$(date '+%H:%M:%S')"

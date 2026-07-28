@@ -15,10 +15,15 @@ This builds on the `slice-commits` skill's `hunk_slice.py`, which does the actua
 hunk/line staging against `HEAD` (never touching the working tree, fully
 reversible). Read that skill if you need the ID scheme / plan schema details.
 
+`.claude/edit-groups/` carries its own `.gitignore` (`*`), written by the hook,
+so its hints, locks and snapshots never show up in `show` as changes to slice.
+If an older checkout is missing that file, add it before step 2 — otherwise the
+tool's own scratch state contaminates the inventory and gets committed.
+
 ## Steps
 
 1. **Read the intent hints.** For each `.claude/edit-groups/*.json` (skip the
-   `.snapshots/` dir and any `*.lock`), collect:
+   `.snapshots/` dir, `.gitignore`, and any `*.lock`), collect:
    - the category slug (filename without `.json`),
    - its `description`,
    - the set of `file`s across `edits[]`, and each edit's rough line ranges from

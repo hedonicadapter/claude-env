@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "command -v rtk >/dev/null 2>&1 && exec rtk hook claude || exit 0"
+            "command": "command -v rtk >/dev/null 2>&1 || exit 0; out=$(rtk hook claude 2>/dev/null) || exit 0; printf '%s' \"$out\""
           }
         ]
       }
@@ -67,7 +67,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/notify.sh\" notification 'Claude Code needs your attention'"
+            "command": "bash \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/notify.sh\" notification 'Claude Code needs your attention'",
+            "async": true
           }
         ]
       }
@@ -77,7 +78,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/notify.sh\" stop 'Your turn'"
+            "command": "bash \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/notify.sh\" stop 'Your turn'",
+            "async": true
           }
         ]
       }

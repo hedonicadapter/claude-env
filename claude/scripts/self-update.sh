@@ -12,9 +12,37 @@
 #
 # Locally this is a no-op: your machine manages ~/.claude itself.
 
+set -u
+
 [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
 
-curl -fsSL "https://raw.githubusercontent.com/${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}/${CLAUDE_ENV_REF:-main}/install.sh" \
-  | bash >/dev/null 2>&1 || true
+# track-edits.py spawns a nested `claude -p` per edit, and that child fires this
+# same SessionStart hook. Without this guard every single file edit triggers a
+# full ~/.claude reinstall, racing the live session's own hooks.
+[ -z "${CLAUDE_ENV_NESTED:-}" ] || exit 0
+
+REPO="${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}"
+REF="${CLAUDE_ENV_REF:-main}"
+DEST="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+LOG="$DEST/self-update.log"
+
+mkdir -p "$DEST" 2>/dev/null
+TMP="$(mktemp -d)" || exit 0
+trap 'rm -rf "$TMP"' EXIT
+
+{
+  printf -- '--- %s %s@%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$REPO" "$REF"
+
+  # codeload, NOT raw.githubusercontent.com. The cloud session's proxy allowlists
+  # codeload and not raw, so the old raw fetch failed on every start and `|| true`
+  # hid it — leaving the ~7-day snapshot staleness this script exists to fix.
+  if curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$REF" \
+       | tar -xz --strip-components=1 -C "$TMP"; then
+    # Hand install.sh the checkout we already paid for rather than downloading twice.
+    CLAUDE_ENV_SRC="$TMP" bash "$TMP/install.sh"
+  else
+    echo "self-update: fetch failed, keeping the installed config"
+  fi
+} >>"$LOG" 2>&1
 
 exit 0

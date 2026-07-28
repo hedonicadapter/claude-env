@@ -53,9 +53,16 @@ mobile app, so this is optional.
 curl -fsSL https://raw.githubusercontent.com/hedonicadapter/claude-env/main/install.sh | bash
 ```
 
-Honors `CLAUDE_ENV_REPO`, `CLAUDE_ENV_REF`, `CLAUDE_CONFIG_DIR`. The install
-overlays onto an existing `~/.claude` rather than replacing it, so `sessions/`,
-`projects/` and `history.jsonl` survive.
+Honors `CLAUDE_ENV_REPO`, `CLAUDE_ENV_REF`, `CLAUDE_CONFIG_DIR`, and
+`CLAUDE_ENV_SRC` (a pre-fetched checkout, which skips the download).
+
+The install overlays onto an existing `~/.claude` rather than replacing it, so
+anything this repo does not ship — `sessions/`, `projects/`, `history.jsonl` —
+survives untouched. Paths it *does* ship are overwritten: if you already have a
+`~/.claude/CLAUDE.md` or `settings.json`, **they get replaced**. The original is
+copied to `~/.claude/.claude-env-backup/` first and the run tells you how many
+files that happened to. Re-runs are no-ops for unchanged files, so that backup
+is never overwritten by a later install.
 
 ## How it behaves in a cloud session
 
@@ -72,7 +79,10 @@ dir, and `cargo`/`rustup` are present.
 
 **The cache is the thing that surprises you.** Pushing here does not re-run the
 setup script. Either bump the version comment in the setup script, or rely on
-`self-update.sh`, which re-pulls on every session start.
+`self-update.sh`, which re-pulls on every session start — through `codeload`,
+like `install.sh`, since `raw.githubusercontent.com` is not on the allowlist.
+It logs every run to `~/.claude/self-update.log`; check there if a push doesn't
+seem to have landed.
 
 ## Gotchas encoded in these files
 
@@ -80,9 +90,16 @@ setup script. Either bump the version comment in the setup script, or rely on
   repos attached to the session. `install.sh` fetches through `codeload.github.com`
   instead, which goes via the security proxy and is on the Trusted allowlist.
 - **rtk is not installable upstream.** It comes from nixpkgs. `install.sh` tries
-  `$PATH`, then a vendored binary in `bin/`, then `cargo install`. The
-  `PreToolUse` hook is guarded with `command -v rtk`, so a miss is a no-op rather
-  than an error on every Bash call.
+  `$PATH`, then `bin/rtk-$(uname -s)-$(uname -m)`, then
+  `cargo install --git https://github.com/rtk-ai/rtk`. Not plain `cargo install
+  rtk` — the crates.io name belongs to an unrelated tool (reachingforthejack/rtk,
+  "Rust Type Kit"), which would install cleanly, satisfy the hook's
+  `command -v rtk` guard, and then fail on every Bash call. After installing,
+  the script runs `rtk gain` and warns loudly if it's the wrong binary.
+- **The rtk hook survives a broken rtk, not just a missing one.** The
+  `PreToolUse` hook captures rtk's output and only emits it on success, so a
+  wrong-crate, wrong-arch, or too-old rtk degrades to a no-op instead of
+  erroring on every Bash call.
 - **ntfy topic is not hardcoded.** This repo is public and ntfy topics are
   unauthenticated. Set `CLAUDE_NTFY_TOPIC` or the channel stays off.
 - **Plugin pinning is looser than nix.** `extraKnownMarketplaces` pins by `ref`,
@@ -96,6 +113,8 @@ setup script. Either bump the version comment in the setup script, or rely on
 - `prompt-improver@severity1` — the plugin's name inside `severity1-marketplace`
   is a guess. Run `/plugin marketplace add severity1/severity1-marketplace` then
   `/plugin` to get the real name, and fix `enabledPlugins`.
-- `bin/rtk-linux-x86_64` is not committed yet; `install.sh` falls back to
-  `cargo install rtk`, which compiles from source against the 5-minute setup
-  budget. Vendoring the binary makes this reliable.
+- `bin/rtk-linux-x86_64` is not committed yet, so `install.sh` falls back to
+  `cargo install --git https://github.com/rtk-ai/rtk`, which compiles from source
+  against the 5-minute setup budget. Vendoring the binary makes this reliable.
+  Name a vendored binary `rtk-$(uname -s | tr A-Z a-z)-$(uname -m)` — the
+  installer only picks up an exact os/arch match.

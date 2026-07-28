@@ -47,9 +47,16 @@ slice -- appearing in zero slices is allowed (it's reported and left as a
 pending working-tree change, not an error); appearing in more than one is a
 hard error and aborts before anything is committed.
 
-Before committing anything for real, the tool re-simulates the whole plan
-and checks that fully-assigned files reconstruct byte-for-byte to their
-current working-tree content. If that check fails, nothing is committed.
+Before committing anything for real, the tool re-simulates the whole plan.
+Every file whose changes are *all* assigned to some slice is then checked to
+reconstruct byte-for-byte to its current working-tree content -- per file, so
+a plan that deliberately leaves other things pending is still verified. Files
+only partially assigned are named in the output as unverifiable end-states.
+If any check fails, nothing is committed.
+
+Each file is staged with its *working-tree* mode, so a `chmod +x` alongside a
+content edit is preserved; mode changes are not separately sliceable and are
+reported up front.
 
 Undo: since the working tree is never touched, and these are ordinary local
 commits, `git reset --mixed <original-HEAD>` (printed before any commits
@@ -130,6 +137,8 @@ class FileEntry:
         self.working_bytes = None
         self.head_lines = None
         self.working_lines = None
+        self.head_mode = None     # mode recorded in HEAD, or None if absent there
+        self.mode = None          # mode to stage with; see resolve_modes()
 
     def unparsed(self):
         return self.binary or not self.hunks
@@ -162,6 +171,7 @@ def parse_diff(diff_bytes):
 
 
 def parse_one_file(lines, i):
+    header = lines[i]
     i += 1  # skip "diff --git a/... b/..."
     status = "modified"
     is_binary = False
@@ -171,9 +181,9 @@ def parse_one_file(lines, i):
         if l.startswith(b"diff --git ") or l.startswith(b"@@"):
             break
         if l.startswith(b"--- "):
-            a_path = l[4:]
+            a_path = header_path(l[4:])
         elif l.startswith(b"+++ "):
-            b_path = l[4:]
+            b_path = header_path(l[4:])
         elif l.startswith(b"new file mode"):
             status = "added"
         elif l.startswith(b"deleted file mode"):
@@ -183,10 +193,22 @@ def parse_one_file(lines, i):
         i += 1
 
     if a_path is None and b_path is None:
-        # e.g. a pure mode change with no content diff -- nothing to slice
+        # A binary diff carries no ---/+++ pair at all, only "Binary files a/X
+        # and b/X differ", so recover the path from the `diff --git` header.
+        # Without this a modified binary file dropped out of the inventory
+        # silently -- and a plan could then call itself fully covered and print
+        # "Verified" while never committing that file's change.
+        recovered = path_from_diff_header(header) if is_binary else None
+        if recovered is None:
+            # e.g. a pure mode change with no content diff -- nothing to slice
+            while i < len(lines) and not lines[i].startswith(b"diff --git "):
+                i += 1
+            return None, i
+        path = strip_prefix(recovered, b"b/").decode("utf-8", "replace")
+        fe = FileEntry(path=path, status=status, binary=True)
         while i < len(lines) and not lines[i].startswith(b"diff --git "):
             i += 1
-        return None, i
+        return fe, i
 
     if a_path == b"/dev/null":
         path = strip_prefix(b_path, b"b/").decode("utf-8")
@@ -214,6 +236,63 @@ def strip_prefix(b, prefix):
     return b[len(prefix):] if b.startswith(prefix) else b
 
 
+C_ESCAPES = {
+    b"a": b"\a", b"b": b"\b", b"f": b"\f", b"n": b"\n",
+    b"r": b"\r", b"t": b"\t", b"v": b"\v", b'"': b'"', b"\\": b"\\",
+}
+
+
+def unquote_c_style(raw):
+    """Undo git's C-style path quoting (the `"a/we\\"ird"` form)."""
+    body = raw[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(body):
+        c = body[i:i + 1]
+        if c != b"\\":
+            out += c
+            i += 1
+        elif body[i + 1:i + 2] in C_ESCAPES:
+            out += C_ESCAPES[body[i + 1:i + 2]]
+            i += 2
+        elif body[i + 1:i + 2].isdigit():
+            out.append(int(body[i + 1:i + 4], 8))
+            i += 4
+        else:
+            out += body[i + 1:i + 2]
+            i += 2
+    return bytes(out)
+
+
+def header_path(raw):
+    """Path out of a `--- `/`+++ ` line.
+
+    git appends a TAB after the name when it contains a space -- without
+    stripping that, every path with a space in it resolved to nothing and
+    crashed on an empty HEAD baseline.
+    """
+    if raw.startswith(b'"'):
+        return unquote_c_style(raw[:raw.rfind(b'"') + 1])
+    return raw.split(b"\t", 1)[0]
+
+
+def path_from_diff_header(line):
+    """`diff --git a/P b/P` -> `b/P`.
+
+    Splitting that on whitespace is ambiguous when P contains spaces, but we
+    diff with --no-renames, so both halves are always the same path -- which
+    makes the split recoverable by length.
+    """
+    rest = line[len(b"diff --git "):]
+    if rest.startswith(b'"'):
+        mid = rest.find(b'" "')
+        return unquote_c_style(rest[mid + 2:]) if mid != -1 else None
+    n = (len(rest) - 5) // 2  # len("a/") + n + len(" ") + len("b/") + n
+    if n <= 0:
+        return None
+    return rest[2 + n + 1:] if rest[2:2 + n] == rest[2 + n + 3:] else None
+
+
 def parse_hunk(lines, i):
     m = HUNK_RE.match(lines[i])
     if not m:
@@ -234,8 +313,6 @@ def parse_hunk(lines, i):
         if remaining_old <= 0 and remaining_new <= 0:
             break
         if l.startswith(b"@@") or l.startswith(b"diff --git "):
-            break
-        if l == b"" and remaining_old <= 0 and remaining_new <= 0:
             break
         prefix = l[:1]
         if prefix == b" " or l == b"":
@@ -290,21 +367,25 @@ def gather(root, pathspecs):
     diff_bytes = git(root, diff_args).stdout
     files = parse_diff(diff_bytes)
 
-    status_args = ["status", "--porcelain=v1", "-uall"]
+    # -z: NUL-separated and, crucially, *unquoted*. Without it a path containing
+    # a space arrives C-quoted ("untracked file.txt"), which then matches nothing
+    # on disk and degrades the file to an opaque F<n>:whole blob.
+    status_args = ["status", "--porcelain=v1", "-z", "-uall"]
     if rel:
         status_args += ["--"] + rel
-    status_out = git(root, status_args).stdout.decode("utf-8", "replace")
-    for line in status_out.splitlines():
-        if line.startswith("?? "):
-            path = line[3:]
-            files.append(make_untracked_entry(root, path))
+    for record in git(root, status_args).stdout.split(b"\x00"):
+        if record.startswith(b"?? "):
+            files.append(make_untracked_entry(root, record[3:].decode("utf-8", "replace")))
 
     files.sort(key=lambda fe: fe.path)
     assign_ids(files)
 
+    head_blobs = read_head_bytes_batch(root, [fe.path for fe in files])
+    head_mode_map = head_modes(root)
     for fe in files:
-        fe.head_bytes = read_head_bytes(root, fe.path)
+        fe.head_bytes = head_blobs.get(fe.path)
         fe.working_bytes = read_working_bytes(root, fe.path)
+        resolve_modes(root, fe, head_mode_map)
         if not fe.unparsed():
             fe.head_lines = fe.head_bytes.splitlines(keepends=True) if fe.head_bytes is not None else []
             fe.working_lines = fe.working_bytes.splitlines(keepends=True) if fe.working_bytes is not None else []
@@ -324,11 +405,35 @@ def make_untracked_entry(root, path):
     return fe
 
 
-def read_head_bytes(root, path):
-    proc = run(["git", "-C", root, "show", "HEAD:%s" % path], check=False)
+def read_head_bytes_batch(root, paths):
+    """HEAD blob for each path, in one `git cat-file --batch` rather than one
+    `git show` per file. Missing paths map to None."""
+    result = {p: None for p in paths}
+    if not paths:
+        return result
+    payload = b"".join(b"HEAD:" + p.encode("utf-8") + b"\n" for p in paths)
+    proc = run(["git", "-C", root, "cat-file", "--batch"], input_bytes=payload, check=False)
     if proc.returncode != 0:
-        return None
-    return proc.stdout
+        return result
+    out, pos = proc.stdout, 0
+    for p in paths:
+        nl = out.find(b"\n", pos)
+        if nl == -1:
+            break
+        header, pos = out[pos:nl], nl + 1
+        # "<oid> <type> <size>" for a hit; the echoed input + " missing" for a miss.
+        if header.endswith(b" missing"):
+            continue
+        parts = header.rsplit(b" ", 2)
+        if len(parts) != 3:
+            break
+        try:
+            size = int(parts[2])
+        except ValueError:
+            break
+        result[p] = out[pos:pos + size]
+        pos += size + 1  # skip the LF git writes after the contents
+    return result
 
 
 def read_working_bytes(root, path):
@@ -339,15 +444,39 @@ def read_working_bytes(root, path):
         return f.read()
 
 
-def get_mode(root, fe):
-    proc = run(["git", "-C", root, "ls-tree", "HEAD", "--", fe.path], check=False)
-    if proc.returncode == 0 and proc.stdout.strip():
-        return proc.stdout.split()[0].decode()
+def head_modes(root):
+    """Every path's mode in HEAD, in one `ls-tree -r`."""
+    modes = {}
+    proc = git(root, ["ls-tree", "-r", "-z", "HEAD"], check=False)
+    if proc.returncode != 0:
+        return modes
+    for record in proc.stdout.split(b"\x00"):
+        if not record:
+            continue
+        meta, _, path = record.partition(b"\t")
+        if path:
+            modes[path.decode("utf-8")] = meta.split(b" ")[0].decode()
+    return modes
+
+
+def resolve_modes(root, fe, head_mode_map):
+    """Decide the mode to stage `fe` with.
+
+    The working tree is the state being reproduced, so its mode wins. Reading
+    the mode from HEAD unconditionally silently discarded a `chmod +x` that
+    rode along with a content edit -- and the consistency check compared only
+    content, so the run still printed that it matched the working tree exactly.
+
+    Symlinks stay on HEAD's mode: they are not specially handled (see SKILL.md),
+    and read_working_bytes() resolves them to the target's *content*, so
+    claiming 120000 here would stage a blob that is not a link.
+    """
+    fe.head_mode = head_mode_map.get(fe.path)
     abspath = os.path.join(root, fe.path)
-    if os.path.exists(abspath):
-        st = os.stat(abspath)
-        return "100755" if (st.st_mode & 0o111) else "100644"
-    return "100644"
+    if os.path.isfile(abspath) and not os.path.islink(abspath):
+        fe.mode = "100755" if (os.stat(abspath).st_mode & 0o111) else "100644"
+    else:
+        fe.mode = fe.head_mode or "100644"
 
 
 # --------------------------------------------------------------------------
@@ -374,7 +503,13 @@ def file_content_at(fe, landed_ids):
     pos = 0
     for h in fe.hunks:
         before_end = (h.old_start - 1) if h.old_count > 0 else h.old_start
-        assert pos <= before_end, "overlapping hunks in %s" % fe.path
+        # Not an assert: `python -O` strips those, and this is the guard that
+        # stops a corrupt reconstruction being written straight to a blob.
+        if pos > before_end:
+            raise RuntimeError(
+                "overlapping hunks in %s (%s starts before the previous hunk ended)"
+                % (fe.path, h.id)
+            )
         out.extend(head_lines[pos:before_end])
         pos = before_end + h.old_count
         out.extend(hunk_contribution(h, head_lines, fe.working_lines, landed_ids))
@@ -435,6 +570,10 @@ def cmd_show(root, pathspecs):
     for fe in files:
         label = {"modified": "modified", "added": "new file", "deleted": "deleted"}[fe.status]
         tag = " [binary]" if fe.binary else ""
+        # Surfaced because a mode change is not separately sliceable: it rides
+        # along with whichever slice first stages the file.
+        if fe.head_mode and fe.mode != fe.head_mode:
+            tag += " [mode %s -> %s]" % (fe.head_mode, fe.mode)
         out.append("=" * 70)
         out.append("FILE %s  %s  [%s]%s" % (fe.id, fe.path, label, tag))
         out.append("=" * 70)
@@ -533,17 +672,29 @@ def cmd_apply_plan(root, plan_path, dry_run, pathspecs):
             except Exception as e:
                 raise RuntimeError("failed to reconstruct %s at this slice boundary: %s" % (fe.path, e))
 
-    if fully_covered:
-        for fe in files:
-            exists, content = file_state(fe, all_ids_set)
-            expected_exists = fe.working_bytes is not None
-            expected_content = fe.working_bytes if expected_exists else b""
-            if exists != expected_exists or content != expected_content:
-                raise RuntimeError(
-                    "internal consistency check failed for %s: reconstructed state does not match "
-                    "the working tree. Nothing has been committed. This indicates a bug in the plan "
-                    "or the tool -- please report the file path and re-run with --dry-run." % fe.path
-                )
+    # Verify per FILE, not per plan. Leaving IDs unassigned is the documented
+    # normal case (SKILL.md step 2), and gating this on whole-plan coverage
+    # meant those runs -- the common ones -- committed with no byte-for-byte
+    # check at all. A file whose every ID is assigned is verifiable regardless
+    # of what the rest of the plan leaves pending.
+    covered_ids = set(seen_count.keys())
+    verified = []
+    unverifiable = []
+    for fe in files:
+        ids = set(fe.all_ids())
+        if not ids or not ids.issubset(covered_ids):
+            unverifiable.append(fe.path)
+            continue
+        exists, content = file_state(fe, ids)
+        expected_exists = fe.working_bytes is not None
+        expected_content = fe.working_bytes if expected_exists else b""
+        if exists != expected_exists or content != expected_content:
+            raise RuntimeError(
+                "internal consistency check failed for %s: reconstructed state does not match "
+                "the working tree. Nothing has been committed. This indicates a bug in the plan "
+                "or the tool -- please report the file path and re-run with --dry-run." % fe.path
+            )
+        verified.append(fe.path)
 
     print("Plan: %d slice(s) covering %d/%d change IDs%s" % (
         len(slices), len(seen_count), len(all_ids_set),
@@ -556,8 +707,18 @@ def cmd_apply_plan(root, plan_path, dry_run, pathspecs):
     if missing:
         missing_files = sorted({m.split(":")[0].split("H")[0] for m in missing})
         print("Left pending (not part of any slice): %s" % ", ".join(missing_files))
-    if fully_covered:
-        print("Verified: committing every slice reproduces the working tree exactly.")
+
+    mode_changes = [fe for fe in files if fe.head_mode and fe.mode != fe.head_mode]
+    if mode_changes:
+        print("Mode changes (ride along with the file's first slice, not separately sliceable):")
+        for fe in mode_changes:
+            print("  %s  %s -> %s" % (fe.path, fe.head_mode, fe.mode))
+
+    if verified:
+        print("Verified: %d fully-assigned file(s) reconstruct byte-for-byte." % len(verified))
+    if unverifiable:
+        print("Partially assigned, so not verifiable end-state (%d): %s"
+              % (len(unverifiable), ", ".join(unverifiable)))
 
     if dry_run:
         print("\n--dry-run: no git state was changed.")
@@ -576,9 +737,8 @@ def cmd_apply_plan(root, plan_path, dry_run, pathspecs):
             fe = files_by_id[fid]
             exists, content = file_state(fe, landed)
             if exists:
-                mode = get_mode(root, fe)
                 sha = git(root, ["hash-object", "-w", "--stdin"], input_bytes=content).stdout.decode().strip()
-                git(root, ["update-index", "--add", "--cacheinfo", "%s,%s,%s" % (mode, sha, fe.path)])
+                git(root, ["update-index", "--add", "--cacheinfo", "%s,%s,%s" % (fe.mode, sha, fe.path)])
             else:
                 git(root, ["update-index", "--force-remove", "--", fe.path], check=False)
         commit_args = ["commit", "-m", sl["subject"]]
@@ -588,9 +748,12 @@ def cmd_apply_plan(root, plan_path, dry_run, pathspecs):
         new_sha = git(root, ["rev-parse", "--short", "HEAD"]).stdout.decode().strip()
         print("  [%d/%d] %s  ->  %s" % (i, len(slices), new_sha, sl["subject"]))
 
-    final_diff = git(root, ["diff", "--stat"]).stdout.decode("utf-8", "replace").strip()
-    print("\nDone. Remaining working-tree diff (should match only intentionally-pending files):")
-    print(final_diff if final_diff else "  (none)")
+    # `status --short`, not `diff --stat`: untracked files are first-class in
+    # this tool's model, and diff omits them -- so a plan that left an untracked
+    # file pending used to report "(none)" remaining.
+    final = git(root, ["status", "--short", "--untracked-files=all"]).stdout.decode("utf-8", "replace").rstrip()
+    print("\nDone. Still pending (should be only what you deliberately left out):")
+    print(final if final else "  (nothing)")
     print("\nUndo everything from this run: git reset --mixed %s" % original_head)
 
 

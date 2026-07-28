@@ -36,7 +36,11 @@ def read_baseline(cwd, groups_dir, rel_path):
             return f.read()
     try:
         result = subprocess.run(
-            ["git", "-C", cwd, "show", f"HEAD:{rel_path}"],
+            # "HEAD:./<path>" — the leading ./ is what makes git resolve the path
+            # relative to -C's cwd. A bare "HEAD:<path>" is rooted at the REPO
+            # TOP, so from a subdirectory it reads some other file as the
+            # baseline (or nothing, making the whole file look newly added).
+            ["git", "-C", cwd, "show", f"HEAD:./{rel_path}"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0:
@@ -180,14 +184,34 @@ def classify(categories, file_path, tool_name, hunks, intention):
                 "--json-schema", json.dumps(CLASSIFY_SCHEMA),
             ],
             capture_output=True, text=True, timeout=60,
+            # This child is a full Claude Code session: it reads the same
+            # settings.json and fires its own SessionStart and Stop hooks — a
+            # complete ~/.claude reinstall plus a notification, per edit.
+            # --tools "" stops it editing; only this stops its hooks.
+            env={**os.environ, "CLAUDE_ENV_NESTED": "1"},
         )
+    except Exception as exc:
+        sys.stderr.write(f"claude-track-edits: classifier did not run: {exc}\n")
+        return "uncategorized", "Edits not yet classified"
+
+    # Report rather than swallow: an unsupported CLI flag silently degraded
+    # every edit to "uncategorized" forever, with no way to notice.
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip()[:300]
+        sys.stderr.write(
+            f"claude-track-edits: classifier exited {proc.returncode}: {detail}\n"
+        )
+        return "uncategorized", "Edits not yet classified"
+
+    try:
         data = json.loads(proc.stdout)
         out = data.get("structured_output") or {}
         slug = re.sub(r"[^a-z0-9-]+", "-", out.get("slug", "").lower()).strip("-")
         if slug:
             return slug, out.get("description", "")
-    except Exception:
-        pass
+        sys.stderr.write("claude-track-edits: classifier returned no usable slug\n")
+    except Exception as exc:
+        sys.stderr.write(f"claude-track-edits: unparseable classifier output: {exc}\n")
     return "uncategorized", "Edits not yet classified"
 
 
@@ -214,6 +238,11 @@ def append_record(groups_dir, category, description, record):
 
 
 def main():
+    # Re-entry guard: classify() spawns `claude -p`, which is a full session and
+    # fires this very PostToolUse hook again.
+    if os.environ.get("CLAUDE_ENV_NESTED"):
+        return
+
     event = json.load(sys.stdin)
     session_id = event.get("session_id", "unknown")
     transcript_path = event.get("transcript_path", "")
@@ -226,7 +255,7 @@ def main():
     rel_path = os.path.relpath(file_path, cwd) if os.path.isabs(file_path) else file_path
     # Track only files inside repo work tree. Out-of-cwd edits (memory,
     # scratchpad, absolute paths) produced junk ".." entries, empty baselines.
-    if os.path.isabs(rel_path) or rel_path == ".." or rel_path.startswith(".." + os.sep):
+    if rel_path == ".." or rel_path.startswith(".." + os.sep):
         return
     if rel_path.startswith(".claude/edit-groups"):
         return
@@ -244,6 +273,17 @@ def main():
 
     groups_dir = os.path.join(cwd, ".claude", "edit-groups")
     os.makedirs(groups_dir, exist_ok=True)
+    # Self-ignore. This directory holds scratch hints, lock files, and a full
+    # snapshot of every file ever edited — all inside the user's repo. Without
+    # this they surface as untracked changes in the very diff /commit-slices is
+    # meant to slice, get assigned to slices, and get committed.
+    ignore_file = os.path.join(groups_dir, ".gitignore")
+    if not os.path.exists(ignore_file):
+        try:
+            with open(ignore_file, "w") as f:
+                f.write("*\n")
+        except Exception:
+            pass
 
     hunks = get_hunks(cwd, groups_dir, rel_path)
     if not hunks:

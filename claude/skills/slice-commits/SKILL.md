@@ -46,7 +46,7 @@ Splits everything currently pending in a git working tree (staged, unstaged, and
    ```
    python3 scripts/hunk_slice.py apply-plan <plan.json> --dry-run
    ```
-   This validates coverage (errors — with nothing committed — if any ID is claimed by more than one slice; reports anything left unassigned) and, when coverage is complete, verifies in memory that committing every slice would reproduce the current working tree byte-for-byte, *before* anything is written. Fix the plan and re-run if it errors.
+   This validates coverage (errors — with nothing committed — if any ID is claimed by more than one slice; reports anything left unassigned) and verifies in memory, *before* anything is written, that every **fully-assigned file** reconstructs byte-for-byte to its current working-tree content. Verification is per file, so deliberately leaving other IDs pending doesn't switch it off. Files only partially assigned are listed as unverifiable end-states — that's expected, not a warning. Fix the plan and re-run if it errors.
 
 5. **Show the user the slice list the dry-run printed and get a quick go-ahead** before committing for real. This isn't about risk — the operation is trivially reversible either way — it's that the grouping is a semantic judgment call, and a five-second glance catches a bad split before it's five commits to fix instead of one plan to edit.
 
@@ -68,7 +68,9 @@ Try `python3 scripts/hunk_slice.py ...` directly first. If `python3` isn't on `P
 ## Limitations
 
 - Renames aren't detected as such (diffed with `--no-renames`); a rename shows up as a full delete + full add. Land both halves in the same slice if you want it to still read as a rename in `git log`.
-- Mode-only changes, symlinks, and submodules aren't specially handled. Anything the parser can't confidently break into hunks (this includes binary files) falls back to one atomic `F<n>:whole` id — include or exclude it as a unit.
+- Each file is staged with its **working-tree** mode, so a `chmod +x` made alongside a content edit is preserved. A mode change isn't separately sliceable, though: it rides along with whichever slice first stages that file. `show` flags it as `[mode 100644 -> 100755]` and `apply-plan` lists every one up front, so check that placement is what you want.
+- A mode change with *no* content change produces nothing to slice at all — that file won't appear in `show`. Commit it yourself.
+- Symlinks and submodules aren't specially handled; symlinks keep HEAD's mode rather than being staged as links. Anything the parser can't confidently break into hunks (this includes binary files) falls back to one atomic `F<n>:whole` id — include or exclude it as a unit.
 - Assumes nothing else is committing or rewriting history in the same repo while a plan is being applied.
 
 `scripts/hunk_slice.py`'s module docstring (also shown by `--help` on either subcommand) has the exact ID scheme and plan schema if you need the full reference.

@@ -1,1 +1,4 @@
 claude/notify.log
+claude/self-update.log
+.claude/edit-groups/
+.DS_Store
