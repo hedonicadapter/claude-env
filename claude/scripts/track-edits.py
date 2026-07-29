@@ -1,5 +1,7 @@
 import difflib
 import fcntl
+import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -7,6 +9,20 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
+
+# Files whose *content* must never be copied anywhere. Everything below this
+# module writes a full plaintext snapshot plus the literal patch text into the
+# edit-groups store, so tracking a credential file means two more plaintext
+# copies of it on disk. The store now lives outside the work tree (see
+# store_dir), which makes those copies un-committable — but un-committable is
+# not the same as safe to hold a private key. Mirrors permissions.deny in
+# settings.json: that stops Claude reading these, this stops an edit made by
+# anything else from being copied.
+SENSITIVE_NAMES = (
+    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx",
+    "*_rsa", "*_dsa", "*_ecdsa", "*_ed25519", "*.tfvars",
+)
+SENSITIVE_DIRS = ("secrets", ".ssh", ".aws", ".gnupg")
 
 CLASSIFY_SCHEMA = {
     "type": "object",
@@ -22,6 +38,53 @@ CLASSIFY_SCHEMA = {
     },
     "required": ["slug", "description"],
 }
+
+
+def store_dir(cwd):
+    """Where this work tree's grouping hints and snapshots live.
+
+    Deliberately OUTSIDE the work tree. This directory holds a full plaintext
+    copy of every tracked file plus verbatim conversation text; while it sat at
+    .claude/edit-groups/ the only thing keeping that out of a commit was a
+    generated .gitignore containing `*`, which one `git add -f`, one `tar` of
+    the project directory, or one tool that ignores gitignores defeats.
+
+    Named after the work-tree path so the store stays greppable, with a hash
+    suffix because the flattening alone collides: /a/b-c and /a/b/c both render
+    as -a-b-c, and a collision silently merges two repos' snapshots.
+    """
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(
+        os.path.expanduser("~"), ".claude"
+    )
+    # realpath, not abspath: the hook gets its cwd from the event while
+    # --print-store gets it from os.getcwd(), and on macOS those disagree the
+    # moment anything sits behind a symlink (/tmp vs /private/tmp). Two spellings
+    # of one work tree would mean two stores, and the reader would find neither
+    # the writer's hints nor its snapshots.
+    cwd = os.path.realpath(cwd)
+    digest = hashlib.sha256(cwd.encode("utf-8", "surrogateescape")).hexdigest()[:8]
+    key = cwd.replace(os.sep, "-") + "-" + digest
+    return os.path.join(config, "edit-groups", key)
+
+
+def is_sensitive(rel_path):
+    parts = rel_path.split(os.sep)
+    if any(p in SENSITIVE_DIRS for p in parts[:-1]):
+        return True
+    return any(fnmatch.fnmatch(parts[-1], pat) for pat in SENSITIVE_NAMES)
+
+
+def clean_description(text):
+    """Flatten model-authored text before it is stored.
+
+    This string is replayed into every later classifier prompt and read by
+    /commit-slices to seed commit subjects shown to the main session. It is
+    derived from `intention`, which is verbatim conversation text and can carry
+    content from a web fetch or a file — so it is untrusted, and it does not
+    get to smuggle newlines or control characters into any of those places.
+    """
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", text or "")
+    return re.sub(r"\s+", " ", text).strip()[:100]
 
 
 def snapshot_path(groups_dir, rel_path):
@@ -208,7 +271,7 @@ def classify(categories, file_path, tool_name, hunks, intention):
         out = data.get("structured_output") or {}
         slug = re.sub(r"[^a-z0-9-]+", "-", out.get("slug", "").lower()).strip("-")
         if slug:
-            return slug, out.get("description", "")
+            return slug, clean_description(out.get("description", ""))
         sys.stderr.write("claude-track-edits: classifier returned no usable slug\n")
     except Exception as exc:
         sys.stderr.write(f"claude-track-edits: unparseable classifier output: {exc}\n")
@@ -227,7 +290,7 @@ def append_record(groups_dir, category, description, record):
             else:
                 data = {"category": category, "description": description, "edits": []}
             if description and not data.get("description"):
-                data["description"] = description
+                data["description"] = clean_description(description)
             data["edits"].append(record)
             tmp_path = path + ".tmp"
             with open(tmp_path, "w") as f:
@@ -257,7 +320,13 @@ def main():
     # scratchpad, absolute paths) produced junk ".." entries, empty baselines.
     if rel_path == ".." or rel_path.startswith(".." + os.sep):
         return
+    # The store is out of tree now, so this only catches leftovers from before
+    # the move. Cheap, and stops an old in-repo store being tracked as source.
     if rel_path.startswith(".claude/edit-groups"):
+        return
+    # Never snapshot a credential file. Losing the grouping hint for one is the
+    # cheap side of this trade.
+    if is_sensitive(rel_path):
         return
 
     # Skip non-git cwd: no HEAD to diff against, nothing downstream to consume.
@@ -271,19 +340,25 @@ def main():
     except Exception:
         return
 
-    groups_dir = os.path.join(cwd, ".claude", "edit-groups")
-    os.makedirs(groups_dir, exist_ok=True)
-    # Self-ignore. This directory holds scratch hints, lock files, and a full
-    # snapshot of every file ever edited — all inside the user's repo. Without
-    # this they surface as untracked changes in the very diff /commit-slices is
-    # meant to slice, get assigned to slices, and get committed.
-    ignore_file = os.path.join(groups_dir, ".gitignore")
-    if not os.path.exists(ignore_file):
-        try:
-            with open(ignore_file, "w") as f:
-                f.write("*\n")
-        except Exception:
-            pass
+    # Out of tree, so there is no longer a .gitignore to write and no way for
+    # this scratch state to contaminate the diff /commit-slices is meant to
+    # slice. That self-ignore file used to be the only thing standing between a
+    # plaintext snapshot of every edited file and a commit.
+    groups_dir = store_dir(cwd)
+    try:
+        os.makedirs(groups_dir, exist_ok=True)
+    except OSError as exc:
+        sys.stderr.write(
+            f"claude-track-edits: cannot create {groups_dir}, not tracking this edit: {exc}\n"
+        )
+        return
+    # 0700 on the store root rather than just this work tree's dir: the root
+    # aggregates plaintext from every repo on the box. Best-effort — worth
+    # tightening a loose pre-existing dir, not worth dropping the edit over.
+    try:
+        os.chmod(os.path.dirname(groups_dir), 0o700)
+    except OSError:
+        pass
 
     hunks = get_hunks(cwd, groups_dir, rel_path)
     if not hunks:
@@ -306,6 +381,13 @@ def main():
 
 
 if __name__ == "__main__":
+    # /commit-slices has to locate the store. Exposing it here keeps the key
+    # derivation in one place — duplicating it in a markdown file guarantees the
+    # two drift, and a reader looking in the wrong directory finds no hints and
+    # silently slices everything as uncategorized.
+    if len(sys.argv) > 1 and sys.argv[1] == "--print-store":
+        print(store_dir(sys.argv[2] if len(sys.argv) > 2 else os.getcwd()))
+        sys.exit(0)
     try:
         main()
     except Exception as exc:

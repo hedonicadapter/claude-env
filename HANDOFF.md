@@ -108,6 +108,12 @@ Do not "fix" these without reading the reason.
   `command -v rtk`, and then fails on `rtk hook claude` — breaking every Bash
   call, which is exactly what the guard exists to prevent. `install.sh` verifies
   with `rtk gain` afterwards and warns if it looks like the wrong binary.
+- **The rtk rev is pinned to a sha, not a tag or branch.** `4c6d914` is v0.41.0,
+  the version actually verified against `rtk hook claude` and `rtk gain`. Tags are
+  mutable upstream; a sha is not. This matters more than it looks: the
+  `PreToolUse` hook returns `updatedInput`, so rtk decides what Bash command
+  Claude Code actually executes. `--locked` is there because `build.rs` runs at
+  install time, so an unpinned dependency tree is also executable input.
 - **`self-update.sh` fetches via codeload, not raw.githubusercontent.com.** Only
   codeload is on the Trusted allowlist. It also logs to
   `~/.claude/self-update.log` rather than discarding output — a silently failing
@@ -131,11 +137,13 @@ Do not "fix" these without reading the reason.
   the README. Must be public, or `raw.githubusercontent.com` and `codeload` need
   a token. Changing the name means updating all three.
 - **Vendor a prebuilt rtk?** `bin/rtk-linux-x86_64` is absent, so `install.sh`
-  falls back to `cargo install --git https://github.com/rtk-ai/rtk`, compiling
-  from source against the 5-minute budget. Vendoring makes it reliable; it also
-  puts a binary in git — decide on Git LFS or a release asset before the first
-  push, not after. The installer looks for `bin/rtk-$os-$arch` derived from
-  `uname`, so an arm64 build can sit alongside the x86_64 one.
+  falls back to `cargo install --git ... --rev 4c6d914 --locked`, compiling from
+  source against the 5-minute budget. Vendoring makes it reliable; it also puts a
+  binary in git — decide on Git LFS or a release asset before the first push, not
+  after. The installer looks for `bin/rtk-$os-$arch` derived from `uname`, so an
+  arm64 build can sit alongside the x86_64 one. If you vendor, add a sha256 check
+  before `install -m755`: that path drops a binary straight onto `$PATH`, and it
+  is the same binary that gets command-rewrite authority over every Bash call.
 
 ## hunk_slice.py parser bugs found while testing
 
@@ -166,12 +174,71 @@ aborts before committing, so it fails loudly instead of corrupting a blob.
 
 ## Owed verification
 
-- `prompt-improver@severity1` in `enabledPlugins` is a guess at the plugin's name
-  inside `severity1-marketplace`. Run `/plugin marketplace add
-  severity1/severity1-marketplace` then `/plugin` for the real name.
-- `code-simplifier@official` should be confirmed the same way.
+- `code-simplifier@official` — confirm the plugin name with `/plugin marketplace
+  add anthropics/claude-plugins-official` then `/plugin`.
 - First real cloud run: push, set the setup script, start a session, confirm the
   output style, model, hooks and `/commit-slices` all took.
+- **Before the first push:** branch protection on `main`, 2FA, signed commits
+  required, no outside collaborators. `self-update.sh` makes push access
+  equivalent to unattended root execution in every cloud session, so that is the
+  actual security boundary — see README "Security posture".
+
+## Security review — 2026-07-29
+
+Full pass over the repo as a cloud startup script. Decided and applied:
+
+| Finding | Decision |
+|---|---|
+| `self-update.sh` executes unpinned `main` every session | Keep it; push access is the boundary (repo hardening above) |
+| `cargo install --git` tracked HEAD | Pinned `--rev 4c6d914 --locked` |
+| rtk rewrites every Bash command | Accepted; the pin is the control |
+| `prompt-improver@severity1`, unverified 3rd-party plugin | **Dropped**, marketplace and all |
+| No `permissions.deny` | Added a credential-read deny list |
+| `track-edits.py` snapshots any file, incl. secrets | Sensitive-path skip; `.gitignore` failure is now a hard stop |
+| Model-authored `description` stored unsanitized | `clean_description()` on write — control chars stripped, 100-char clamp |
+| `curl -fsSL \| tar` unhardened, no `pipefail` | `--proto '=https' --proto-redir '=https' --max-time 120`, `set -uo pipefail`, `--no-same-owner --no-same-permissions` |
+| `chmod +x` over unguarded globs | Now chmods only the files the copy loop installed |
+
+Consciously **not** changed, and why: `CLAUDE_ENV_REPO`/`REF` stay unvalidated
+(cloud env vars are already equivalent to code — README says so); the
+`Bash(rtk ls *)`/`Bash(rtk grep *)` allowlist stays (prompt-free reads are the
+point); `CLAUDE_NTFY_TOPIC` stays uninterpolated-but-unvalidated; the
+`CLAUDE_CODE_REMOTE` gate stays a single env var; logs stay unrotated.
+
+## Security review — second pass, 2026-07-29
+
+Re-review of the same surface, decided by the user finding by finding:
+
+| Finding | Decision |
+|---|---|
+| `self-update.sh` executes unpinned `main` every session | **Reversed the first pass.** Both scripts now default `CLAUDE_ENV_REF` to `PINNED_REF` (a sha) and warn on stderr when the effective ref is not 40-hex. Roll forward by setting the env var in the cloud environment — that does not bust the snapshot |
+| Snapshots + verbatim conversation text sat in the work tree, one `git add -f` from a commit | Store moved out of tree to `$CLAUDE_CONFIG_DIR/edit-groups/<flattened-path>-<hash>/`; root chmod `0700`; the generated `.gitignore` is gone with it |
+| rtk hook output passed through unvalidated | **Left as-is**, deliberately: sha-pinned source, `--locked`, and `bin/` ships no binary so the path is inert wherever cargo is absent |
+| `self-update.log` / `notify.log` unbounded | Trimmed after each write — 500 and 1000 lines |
+| tar symlink-escape, `REF`/`REPO` URL validation | **Left as-is**; both only bite once the source is already compromised, at which point `install.sh` is running the attacker's code anyway |
+
+The store move is the one with a reader on the other side: `/commit-slices` must
+not re-derive the path. It calls
+`track-edits.py --print-store` instead, so the key derivation exists once. If you
+change how the key is built, nothing else needs touching — that is the point.
+
+No migration was written. A stale in-repo `.claude/edit-groups/` just sits there;
+`/commit-slices` tells you to read it if it holds a category you still need, then
+delete it. New edits populate the new store from scratch, and snapshots
+self-correct against HEAD on first touch.
+
+Reviewed and found clean, don't churn: `hunk_slice.py` (no `shell=True`, git
+called with arg lists, `--` before user paths, working tree never touched,
+byte-for-byte verification before any commit), the atomic cp-then-rename overlay,
+`mktemp -d` + trap, backup-before-overwrite refusing to overwrite on backup
+failure, the `slug` sanitizer already blocking path traversal, and the nested
+`claude -p` running `--safe-mode --tools ""` behind a re-entry guard.
+
+`clean_description()` is write-side only, per the decision taken. Pre-existing
+group JSON written before this change still holds unsanitized descriptions; they
+converge as categories are pruned by `/commit-slices`. (Those files are in the
+old in-repo store, which the second pass below orphaned — so in practice they
+converge by being deleted.)
 
 ## Deferred
 

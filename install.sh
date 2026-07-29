@@ -3,24 +3,48 @@
 # box, devcontainer, CI. Idempotent, and always exits 0 — a cloud setup script
 # that exits non-zero kills the session before Claude Code launches.
 #
-#   curl -fsSL https://raw.githubusercontent.com/hedonicadapter/claude-env/main/install.sh | bash
+#   REF=<sha>   # see PINNED_REF below; a branch works but warns
+#   curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" | bash
 #
 # Exiting 0 is not the same as claiming success: every failure path prints what
 # broke, and the final line says "PARTIAL" if anything did.
 #
 # Env:
 #   CLAUDE_ENV_REPO   owner/repo to pull from      (default hedonicadapter/claude-env)
-#   CLAUDE_ENV_REF    branch/tag/sha               (default main)
+#   CLAUDE_ENV_REF    branch/tag/sha               (default: the pinned sha below)
 #   CLAUDE_ENV_SRC    pre-fetched checkout; skips the download entirely
 #   CLAUDE_CONFIG_DIR install target               (default $HOME/.claude)
 
-set -u
+# pipefail matters on the one pipeline below: without it `curl | tar` reports
+# only tar's status, so a stream truncated on a member boundary extracts a
+# partial tree and exits 0 — a silent partial install.
+set -uo pipefail
+
+# A sha, not `main`. self-update.sh re-runs this script on every cloud session
+# start, so a branch ref means whatever sits on that branch at that instant gets
+# executed unattended, with the session's repo credentials and network access —
+# and no review step in between. A sha does not move.
+#
+# Rolling out a config change is therefore two steps: push it, then set
+# CLAUDE_ENV_REF to the new sha in the cloud environment's variables. Changing an
+# env var does NOT bust the filesystem snapshot, so the fast-refresh this whole
+# mechanism exists for is preserved — you just choose when it happens.
+#
+# Bump this default when the pushed sha has been reviewed.
+PINNED_REF="04934ab95d1c564c44f28b824e92a34c8a9b7502"
 
 REPO="${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}"
-REF="${CLAUDE_ENV_REF:-main}"
+REF="${CLAUDE_ENV_REF:-$PINNED_REF}"
 DEST="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SRC="${CLAUDE_ENV_SRC:-}"
 BACKUP="$DEST/.claude-env-backup"
+
+# Not fatal — testing a branch is a legitimate thing to want — but it must not be
+# silent. Anything that isn't a full sha is a target someone else can move under
+# you between one session start and the next.
+if ! [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "claude-env: WARNING: ref '$REF' is not a commit sha — this install tracks a moving target that anyone with push access to $REPO controls" >&2
+fi
 
 TMP="$(mktemp -d)" || exit 0
 trap 'rm -rf "$TMP"' EXIT
@@ -28,8 +52,14 @@ trap 'rm -rf "$TMP"' EXIT
 if [ -z "$SRC" ]; then
   # codeload, not the release-asset host: GitHub release assets are scoped to the
   # repos attached to the session and 403 for anything else.
-  if ! curl -fsSL "https://codeload.github.com/$REPO/tar.gz/$REF" \
-       | tar -xz --strip-components=1 -C "$TMP"; then
+  # --proto/--proto-redir: -L follows redirects and curl's default redirect
+  # protocols include plain http, so an injected redirect could downgrade the
+  # fetch. --max-time: a hung connection would otherwise eat the whole ~5 min
+  # cloud setup budget and kill the session.
+  if ! curl -fsSL --proto '=https' --proto-redir '=https' --max-time 120 \
+       "https://codeload.github.com/$REPO/tar.gz/$REF" \
+       | tar -xz --strip-components=1 --no-same-owner --no-same-permissions \
+             -C "$TMP"; then
     echo "claude-env: fetch failed ($REPO@$REF), leaving existing config alone" >&2
     exit 0
   fi
@@ -79,6 +109,7 @@ installed=0
 skipped=0
 backed_up=0
 failed=0
+exec_files=()
 
 # Overlay, not replace — never clobber sessions/, projects/, history.jsonl.
 # Fed by process substitution rather than a pipe so the counters above survive:
@@ -88,6 +119,14 @@ while IFS= read -r -d '' f; do
   dir="$(dirname "$f")"
   src="$SRC/claude/$f"
   dst="$DEST/$f"
+
+  # Collected here rather than chmod'd by glob at the end: a glob over
+  # $DEST/scripts/* marks whatever else happens to live there executable too,
+  # including files this repo never shipped. Recorded before the skip check so
+  # a re-run still corrects the mode on an unchanged file.
+  case "$f" in
+    scripts/*|skills/*/scripts/*) exec_files+=("$dst") ;;
+  esac
 
   # Already byte-identical: skip. Keeps re-runs cheap, shrinks the window in
   # which a live session can observe a half-written file, and on a nix host
@@ -131,7 +170,9 @@ while IFS= read -r -d '' f; do
   fi
 done < <(cd "$SRC/claude" && find . -type f -print0)
 
-chmod +x "$DEST"/scripts/* "$DEST"/skills/*/scripts/* 2>/dev/null
+if [ "${#exec_files[@]}" -gt 0 ]; then
+  chmod +x "${exec_files[@]}" 2>/dev/null
+fi
 
 # rtk: the PreToolUse Bash hook wants it. The hook is guarded and degrades to a
 # no-op, so every failure path here is survivable.
@@ -160,7 +201,15 @@ if ! command -v rtk >/dev/null 2>&1; then
     # --git, NOT `cargo install rtk`: the crates.io `rtk` is an unrelated tool
     # (reachingforthejack/rtk, "Rust Type Kit"). Installing that would satisfy
     # the hook's `command -v rtk` guard and then fail on `rtk hook claude`.
-    cargo install --git https://github.com/rtk-ai/rtk >/dev/null 2>&1 \
+    #
+    # --rev, not a branch or a tag: this binary gets handed command-rewrite
+    # authority over every Bash call (the PreToolUse hook returns updatedInput),
+    # so it is the last thing that should track a moving target. Tags are
+    # mutable upstream; a sha is not. This one is v0.41.0, the version actually
+    # verified against `rtk hook claude` and `rtk gain`. --locked pins the
+    # dependency tree too, since build.rs runs at install time.
+    cargo install --git https://github.com/rtk-ai/rtk \
+      --rev 4c6d9147c46384e61652f4cb6c8f0c695f017bfc --locked >/dev/null 2>&1 \
       || echo "claude-env: cargo install of rtk failed (hook degrades to a no-op)" >&2
   else
     echo "claude-env: no vendored rtk for $os-$arch and no cargo, skipping" >&2

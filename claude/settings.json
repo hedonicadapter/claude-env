@@ -6,6 +6,17 @@
     "allow": [
       "Bash(rtk ls *)",
       "Bash(rtk grep *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*_rsa)",
+      "Read(./**/*.tfvars)",
+      "Read(./secrets/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)"
     ]
   },
   "extraKnownMarketplaces": {
@@ -14,17 +25,10 @@
         "source": "github",
         "repo": "anthropics/claude-plugins-official"
       }
-    },
-    "severity1": {
-      "source": {
-        "source": "github",
-        "repo": "severity1/severity1-marketplace"
-      }
     }
   },
   "enabledPlugins": {
-    "code-simplifier@official": true,
-    "prompt-improver@severity1": true
+    "code-simplifier@official": true
   },
   "hooks": {
     "PreToolUse": [

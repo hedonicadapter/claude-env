@@ -1,13 +1,13 @@
 ---
-description: Commit the pending diff as one commit per intent, pre-grouped from the .claude/edit-groups hints the claude-track-edits hook recorded. Live git diff is authoritative; edit-groups are hints only, so edits made outside Claude are handled too.
+description: Commit the pending diff as one commit per intent, pre-grouped from the edit-groups hints the claude-track-edits hook recorded. Live git diff is authoritative; edit-groups are hints only, so edits made outside Claude are handled too.
 ---
 
 # /commit-slices
 
-Turn the current pending changes into **one commit per intent**, using
-`.claude/edit-groups/*.json` (written by the `track-edits.py` PostToolUse
-hook) as *grouping hints*. The live `git diff` is authoritative for what gets
-staged — edit-groups only suggest how to group it. Because of that, changes made
+Turn the current pending changes into **one commit per intent**, using the
+edit-groups hints (written by the `track-edits.py` PostToolUse hook) as
+*grouping hints*. The live `git diff` is authoritative for what gets staged —
+edit-groups only suggest how to group it. Because of that, changes made
 **outside** Claude are handled fine: they just land in an `uncategorized` slice
 instead of being lost.
 
@@ -15,15 +15,30 @@ This builds on the `slice-commits` skill's `hunk_slice.py`, which does the actua
 hunk/line staging against `HEAD` (never touching the working tree, fully
 reversible). Read that skill if you need the ID scheme / plan schema details.
 
-`.claude/edit-groups/` carries its own `.gitignore` (`*`), written by the hook,
-so its hints, locks and snapshots never show up in `show` as changes to slice.
-If an older checkout is missing that file, add it before step 2 — otherwise the
-tool's own scratch state contaminates the inventory and gets committed.
+## Locating the store
+
+The hints live **outside** the work tree. Ask the hook where, rather than
+deriving the path yourself — the key derivation lives in one place on purpose:
+
+```
+python3 "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/scripts/track-edits.py" --print-store
+```
+
+Everything below calls that directory `$STORE`. Run it from the same cwd the
+session is using, or pass the work-tree root as a second argument.
+
+It is out of tree because it holds a full plaintext snapshot of every tracked
+file plus verbatim conversation text; back when it sat in `.claude/edit-groups/`,
+a generated `.gitignore` (`*`) was the only thing keeping that out of a commit.
+A consequence worth knowing: nothing in `$STORE` can contaminate the inventory in
+step 2, so there is no ignore file to check for any more. If you find a stale
+`.claude/edit-groups/` inside the repo, it predates the move — read it if a
+category you need is only recorded there, then delete it.
 
 ## Steps
 
-1. **Read the intent hints.** For each `.claude/edit-groups/*.json` (skip the
-   `.snapshots/` dir, `.gitignore`, and any `*.lock`), collect:
+1. **Read the intent hints.** For each `$STORE/*.json` (skip the `.snapshots/`
+   dir and any `*.lock`), collect:
    - the category slug (filename without `.json`),
    - its `description`,
    - the set of `file`s across `edits[]`, and each edit's rough line ranges from
@@ -81,9 +96,9 @@ tool's own scratch state contaminates the inventory and gets committed.
    `git reset --mixed <that-sha>` (working tree is never touched).
 
 8. **Prune consumed hints.** For every category committed **in full**, delete its
-   `.claude/edit-groups/<slug>.json` and `<slug>.json.lock`. Leave hints for
+   `$STORE/<slug>.json` and `<slug>.json.lock`. Leave hints for
    anything left pending (partially committed or intentionally excluded). Do
-   **not** touch `.claude/edit-groups/.snapshots/` — those baselines self-correct
+   **not** touch `$STORE/.snapshots/` — those baselines self-correct
    against the new HEAD, and deleting a snapshot for a partially-committed file
    would cause the hook to re-capture the still-pending changes on its next edit.
    Report what was pruned and what was kept.

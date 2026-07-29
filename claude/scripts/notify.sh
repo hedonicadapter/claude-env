@@ -40,4 +40,14 @@ if [ -n "${CLAUDE_NTFY_TOPIC:-}" ]; then
 fi
 
 printf '%s\t%s\ttn=%s\tntfy=%s\t%s\n' "$ts" "$event" "$tn" "$nt" "$message" >> "$log"
+
+# This fires on every Stop and every Notification, so the log grows faster than
+# anything else here and nothing prunes it. Losing a line to a concurrent append
+# during the swap is fine — it is a log, not a ledger.
+if [ -f "$log" ] && tail -n 1000 "$log" > "$log.tmp" 2>/dev/null; then
+  mv -f "$log.tmp" "$log" 2>/dev/null || rm -f "$log.tmp" 2>/dev/null
+else
+  rm -f "$log.tmp" 2>/dev/null
+fi
+
 exit 0
