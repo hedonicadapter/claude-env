@@ -33,7 +33,7 @@ environment, and put this in **Setup script**:
 ```bash
 #!/bin/bash
 # claude-env v1   <- bump to bust the environment cache
-REF="${CLAUDE_ENV_REF:-04934ab95d1c564c44f28b824e92a34c8a9b7502}"
+REF="${CLAUDE_ENV_REF:-54855fc34578834feef8e50cbbd354df005c8382}"
 curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" | bash
 exit 0
 ```
@@ -64,7 +64,7 @@ mobile app, so this is optional.
 ### Anywhere else
 
 ```bash
-REF=04934ab95d1c564c44f28b824e92a34c8a9b7502
+REF=54855fc34578834feef8e50cbbd354df005c8382
 curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" | bash
 ```
 

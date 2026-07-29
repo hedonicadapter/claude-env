@@ -28,7 +28,7 @@ set -uo pipefail
 # that branch execute here with no review step. Bump both after pushing, or set
 # CLAUDE_ENV_REF in the cloud environment's variables to roll forward without
 # touching the repo.
-PINNED_REF="04934ab95d1c564c44f28b824e92a34c8a9b7502"
+PINNED_REF="54855fc34578834feef8e50cbbd354df005c8382"
 
 REPO="${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}"
 REF="${CLAUDE_ENV_REF:-$PINNED_REF}"

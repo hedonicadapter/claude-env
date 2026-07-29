@@ -31,7 +31,7 @@ set -uo pipefail
 # mechanism exists for is preserved — you just choose when it happens.
 #
 # Bump this default when the pushed sha has been reviewed.
-PINNED_REF="04934ab95d1c564c44f28b824e92a34c8a9b7502"
+PINNED_REF="54855fc34578834feef8e50cbbd354df005c8382"
 
 REPO="${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}"
 REF="${CLAUDE_ENV_REF:-$PINNED_REF}"
