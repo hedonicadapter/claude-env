@@ -23,19 +23,32 @@ set -uo pipefail
 # full ~/.claude reinstall, racing the live session's own hooks.
 [ -z "${CLAUDE_ENV_NESTED:-}" ] || exit 0
 
-# Keep in step with install.sh's PINNED_REF. A sha, not a branch: this fetch runs
-# unattended on every session start, so a branch ref would mean the contents of
-# that branch execute here with no review step. Bump both after pushing, or set
-# CLAUDE_ENV_REF in the cloud environment's variables to roll forward without
-# touching the repo.
-PINNED_REF="54855fc34578834feef8e50cbbd354df005c8382"
-
 REPO="${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}"
-REF="${CLAUDE_ENV_REF:-$PINNED_REF}"
 DEST="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 LOG="$DEST/self-update.log"
 
+# Before the first thing that writes to $LOG, not after.
 mkdir -p "$DEST" 2>/dev/null
+
+# No PINNED_REF here, deliberately, and no fallback to a branch either.
+#
+# This script is installed by the very tree it downloads, so a pin baked into it
+# ratchets *backwards*: the installed copy pins to N-1, fetches N-1, and installs
+# N-1's copy of this script — which pins to N-2. Every session start walks the
+# config one commit further back until it falls off the end onto whatever the
+# oldest commit defaulted to. A pin cannot live in the thing it updates.
+#
+# CLAUDE_ENV_REF can, because it is a cloud *environment variable*: present in
+# every session, and not something an install can overwrite. If it is absent
+# there is no trustworthy ref to fetch, so do nothing — a stale config that the
+# setup script installed deliberately beats silently rolling backwards.
+if [ -z "${CLAUDE_ENV_REF:-}" ]; then
+  printf -- '--- %s no CLAUDE_ENV_REF set, leaving the installed config alone\n' \
+    "$(date '+%Y-%m-%d %H:%M:%S')" >>"$LOG" 2>/dev/null
+  exit 0
+fi
+REF="$CLAUDE_ENV_REF"
+
 TMP="$(mktemp -d)" || exit 0
 trap 'rm -rf "$TMP"' EXIT
 

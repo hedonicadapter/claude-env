@@ -3,8 +3,12 @@
 # box, devcontainer, CI. Idempotent, and always exits 0 — a cloud setup script
 # that exits non-zero kills the session before Claude Code launches.
 #
-#   REF=<sha>   # see PINNED_REF below; a branch works but warns
-#   curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" | bash
+#   REF=<sha>   # a branch works but warns
+#   curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" \
+#     | CLAUDE_ENV_REF="$REF" bash
+#
+# Pass CLAUDE_ENV_REF. This script cannot know its own sha, so without it the
+# tree installed is PINNED_REF's, not the one you fetched. See PINNED_REF below.
 #
 # Exiting 0 is not the same as claiming success: every failure path prints what
 # broke, and the final line says "PARTIAL" if anything did.
@@ -20,17 +24,17 @@
 # partial tree and exits 0 — a silent partial install.
 set -uo pipefail
 
-# A sha, not `main`. self-update.sh re-runs this script on every cloud session
-# start, so a branch ref means whatever sits on that branch at that instant gets
-# executed unattended, with the session's repo credentials and network access —
-# and no review step in between. A sha does not move.
+# CLAUDE_ENV_REF is the real pin, and it is meant to come from the *caller* — the
+# cloud environment's variables, or the setup script that fetched this file:
 #
-# Rolling out a config change is therefore two steps: push it, then set
-# CLAUDE_ENV_REF to the new sha in the cloud environment's variables. Changing an
-# env var does NOT bust the filesystem snapshot, so the fast-refresh this whole
-# mechanism exists for is preserved — you just choose when it happens.
+#   REF=<sha>
+#   curl -fsSL ".../$REF/install.sh" | CLAUDE_ENV_REF="$REF" bash
 #
-# Bump this default when the pushed sha has been reviewed.
+# Passing it matters. This script cannot know which sha it was itself downloaded
+# at, so without CLAUDE_ENV_REF it falls back to PINNED_REF — which is baked in at
+# commit time and is therefore always at least one commit behind the file you
+# fetched. That mismatch installs a tree you did not review. PINNED_REF is a
+# last-resort floor for a caller that passes nothing, not the intended path.
 PINNED_REF="54855fc34578834feef8e50cbbd354df005c8382"
 
 REPO="${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}"
@@ -39,11 +43,21 @@ DEST="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 SRC="${CLAUDE_ENV_SRC:-}"
 BACKUP="$DEST/.claude-env-backup"
 
-# Not fatal — testing a branch is a legitimate thing to want — but it must not be
-# silent. Anything that isn't a full sha is a target someone else can move under
-# you between one session start and the next.
-if ! [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "claude-env: WARNING: ref '$REF' is not a commit sha — this install tracks a moving target that anyone with push access to $REPO controls" >&2
+if [ -n "$SRC" ]; then
+  # $REF describes nothing when the tree was handed to us pre-fetched. Reporting
+  # it would name a commit this run never looked at — which is exactly the log
+  # line you would be trusting during an incident.
+  SOURCE="$SRC (pre-fetched)"
+else
+  SOURCE="$REPO@$REF"
+  if [ -z "${CLAUDE_ENV_REF:-}" ]; then
+    echo "claude-env: no CLAUDE_ENV_REF set, falling back to PINNED_REF ($PINNED_REF). If you fetched this script at some other sha, the tree being installed is NOT the one you fetched — pass CLAUDE_ENV_REF to keep the two in step." >&2
+  elif ! [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+    # Not fatal — testing a branch is a legitimate thing to want — but it must
+    # not be silent. Anything that isn't a full sha is a target someone else can
+    # move under you between one session start and the next.
+    echo "claude-env: WARNING: ref '$REF' is not a commit sha — this install tracks a moving target that anyone with push access to $REPO controls" >&2
+  fi
 fi
 
 TMP="$(mktemp -d)" || exit 0
@@ -223,9 +237,9 @@ if command -v rtk >/dev/null 2>&1 && ! rtk gain >/dev/null 2>&1; then
 fi
 
 if [ "$failed" -gt 0 ]; then
-  echo "claude-env: PARTIAL install of $REPO@$REF -> $DEST ($installed written, $skipped unchanged, $failed failed)" >&2
+  echo "claude-env: PARTIAL install of $SOURCE -> $DEST ($installed written, $skipped unchanged, $failed failed)" >&2
 else
-  echo "claude-env: installed $REPO@$REF -> $DEST ($installed written, $skipped unchanged)" >&2
+  echo "claude-env: installed $SOURCE -> $DEST ($installed written, $skipped unchanged)" >&2
 fi
 if [ "$backed_up" -gt 0 ]; then
   echo "claude-env: overwrote $backed_up pre-existing file(s); originals under $BACKUP" >&2

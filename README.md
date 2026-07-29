@@ -34,14 +34,21 @@ environment, and put this in **Setup script**:
 #!/bin/bash
 # claude-env v1   <- bump to bust the environment cache
 REF="${CLAUDE_ENV_REF:-54855fc34578834feef8e50cbbd354df005c8382}"
-curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" \
+  | CLAUDE_ENV_REF="$REF" bash
 exit 0
 ```
 
-The ref is in the URL on purpose. Fetching `main/install.sh` would mean the
-bootstrap runs whatever is on the branch *before* any of the pinning inside
-`install.sh` gets a say — the pin would only ever constrain the second fetch, not
-the code doing the fetching. Same env var drives both, so there is one dial.
+Two details that are load-bearing:
+
+- **The ref is in the URL.** Fetching `main/install.sh` would run whatever is on
+  the branch *before* any pinning inside `install.sh` gets a say — the pin would
+  only ever constrain the second fetch, never the code doing the fetching.
+- **`CLAUDE_ENV_REF` is passed into the pipe.** `install.sh` cannot know which
+  sha it was downloaded at, so if you do not tell it, it falls back to its
+  built-in `PINNED_REF` — which is baked in at commit time and is therefore
+  always at least one commit behind the file you just fetched. It would install
+  a tree you never reviewed. One variable spelled twice keeps them in step.
 
 Add to **Environment variables**:
 
@@ -53,9 +60,15 @@ CLAUDE_NTFY_TOPIC=your-topic          # optional
 `CLAUDE_ENV_REF` is the dial you turn to roll out a config change: push, then
 update the variable. It does **not** bust the environment cache, so the setup
 script does not re-run — `self-update.sh` picks the new sha up at the next
-session start. Bump the fallback baked into the setup script (and `PINNED_REF`
-in both scripts) only when you want a freshly-built environment to land there
-too.
+session start.
+
+**`self-update.sh` does nothing when that variable is unset**, by design. It is
+installed by the very tree it downloads, so a pin baked into *it* would ratchet
+backwards — the installed copy pins to N-1, fetches N-1, installs N-1's copy of
+itself pinning to N-2, and each session start walks the config one commit further
+back. A pin cannot live inside the thing it updates. An environment variable can:
+it is present in every session and no install can overwrite it. With it unset,
+the config simply stays whatever the setup script put there.
 
 If you want ntfy, also set **Network access** to Custom and add `ntfy.sh` —
 it is not on the Trusted allowlist. Cloud sessions already notify the Claude
@@ -65,7 +78,8 @@ mobile app, so this is optional.
 
 ```bash
 REF=54855fc34578834feef8e50cbbd354df005c8382
-curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" | bash
+curl -fsSL "https://raw.githubusercontent.com/hedonicadapter/claude-env/$REF/install.sh" \
+  | CLAUDE_ENV_REF="$REF" bash
 ```
 
 Honors `CLAUDE_ENV_REPO`, `CLAUDE_ENV_REF`, `CLAUDE_CONFIG_DIR`, and

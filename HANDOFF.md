@@ -217,6 +217,41 @@ Re-review of the same surface, decided by the user finding by finding:
 | `self-update.log` / `notify.log` unbounded | Trimmed after each write — 500 and 1000 lines |
 | tar symlink-escape, `REF`/`REPO` URL validation | **Left as-is**; both only bite once the source is already compromised, at which point `install.sh` is running the attacker's code anyway |
 
+### The pin cannot live in the thing it updates
+
+Caught by an end-to-end run against the live remote, *after* the first version of
+the pin shipped. `self-update.sh` is installed by the very tree it downloads, so
+a `PINNED_REF` baked into it ratchets **backwards**: the installed copy pins to
+N-1, fetches N-1, installs N-1's copy of itself pinning to N-2, and every session
+start walks the config one commit further back until it falls off the end onto
+whatever the oldest commit defaulted to — `main`. The symptom in the log was two
+disagreeing shas on consecutive lines:
+
+```
+--- ...@54855fc          <- self-update fetched this
+claude-env: installed ...@04934ab   <- install.sh reported this
+```
+
+Fixes, all three necessary:
+
+1. `self-update.sh` has no `PINNED_REF` and **exits when `CLAUDE_ENV_REF` is
+   unset**. A cloud environment variable is the only stable home for the pin: it
+   is in every session and no install can overwrite it. No ref, no update.
+2. The bootstrap pipes the ref in — `curl ".../$REF/install.sh" | CLAUDE_ENV_REF="$REF" bash`.
+   `install.sh` cannot know its own sha, so unpassed it falls back to `PINNED_REF`,
+   which is baked in at commit time and always at least one commit behind the file
+   just fetched. It warns loudly on that path now.
+3. `install.sh` reports the pre-fetched source path instead of `$REF` when
+   `CLAUDE_ENV_SRC` is set. It was naming a commit the run never read — in the one
+   log line you would be trusting during an incident.
+
+`PINNED_REF` being one commit behind is now harmless and expected; it is a
+last-resort floor for a caller that passes nothing, not the intended path. Do not
+try to chase it forward — a sha cannot contain itself, so that regress does not
+terminate.
+
+### Reader on the other side of the store move
+
 The store move is the one with a reader on the other side: `/commit-slices` must
 not re-derive the path. It calls
 `track-edits.py --print-store` instead, so the key derivation exists once. If you
