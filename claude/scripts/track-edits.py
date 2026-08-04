@@ -15,14 +15,23 @@ from datetime import datetime, timezone
 # edit-groups store, so tracking a credential file means two more plaintext
 # copies of it on disk. The store now lives outside the work tree (see
 # store_dir), which makes those copies un-committable — but un-committable is
-# not the same as safe to hold a private key. Mirrors permissions.deny in
-# settings.json: that stops Claude reading these, this stops an edit made by
-# anything else from being copied.
+# not the same as safe to hold a private key.
+#
+# Must cover permissions.deny in settings.json: that stops Claude reading these,
+# this stops an edit made by anything else from being copied. Not a 1:1 mirror —
+# deny's ~/ patterns are unreachable from here (out-of-cwd edits return early)
+# and this list is deliberately wider. Nothing binds the two, so adding a deny
+# pattern means checking it lands here as well. .config/gh was denied and not
+# skipped, which is how this comment got written.
 SENSITIVE_NAMES = (
     ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx",
     "*_rsa", "*_dsa", "*_ecdsa", "*_ed25519", "*.tfvars",
 )
 SENSITIVE_DIRS = ("secrets", ".ssh", ".aws", ".gnupg")
+# Nested credential dirs. A single component cannot express these, and matching
+# on ".config" alone would skip most of a dotfiles tree. Only reachable when the
+# work tree contains one — out-of-cwd edits are dropped before is_sensitive.
+SENSITIVE_DIR_PATHS = (".config/gh",)
 
 CLASSIFY_SCHEMA = {
     "type": "object",
@@ -69,8 +78,13 @@ def store_dir(cwd):
 
 def is_sensitive(rel_path):
     parts = rel_path.split(os.sep)
-    if any(p in SENSITIVE_DIRS for p in parts[:-1]):
+    dirs = parts[:-1]
+    if any(p in SENSITIVE_DIRS for p in dirs):
         return True
+    for pat in SENSITIVE_DIR_PATHS:
+        seq = pat.split("/")
+        if any(dirs[i:i + len(seq)] == seq for i in range(len(dirs) - len(seq) + 1)):
+            return True
     return any(fnmatch.fnmatch(parts[-1], pat) for pat in SENSITIVE_NAMES)
 
 

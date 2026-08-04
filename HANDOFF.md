@@ -275,6 +275,27 @@ converge as categories are pruned by `/commit-slices`. (Those files are in the
 old in-repo store, which the second pass below orphaned — so in practice they
 converge by being deleted.)
 
+## Skip-list divergence — 2026-08-04
+
+`permissions.deny` and `track-edits.py`'s sensitive-path skip must agree, and
+nothing binds them. They had diverged on one pattern: `Read(~/.config/gh/**)`
+was denied, not skipped. `is_sensitive()` matched single path components against
+`SENSITIVE_DIRS`, so a two-segment path was inexpressible.
+
+Narrow but real: line 321 drops out-of-cwd edits, so this only bites when the
+work tree *contains* the dir — which a dotfiles repo does, and
+`.config/gh/hosts.yml` holds a GitHub token. `.ssh` and `.aws` were covered;
+`gh` was not.
+
+Added `SENSITIVE_DIR_PATHS` (nested-sequence match) and `.config/gh`. Matching
+on `.config` alone was rejected — it would skip most of a dotfiles tree, turning
+a leak into silent loss of every grouping hint. Verified: `.config/gh/hosts.yml`
+and `home/.config/gh/hosts.yml` skip, `.config/nvim/init.lua` and a file *named*
+`gh` do not, and the single-component and glob cases still pass.
+
+Remember the asymmetry when extending this: a missing pattern leaks a
+credential, an over-broad one only loses hints.
+
 ## Deferred
 
 Making this the source of truth for the nix config — add it as a flake input,
