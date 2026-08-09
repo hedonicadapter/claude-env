@@ -275,6 +275,52 @@ converge as categories are pruned by `/commit-slices`. (Those files are in the
 old in-repo store, which the second pass below orphaned — so in practice they
 converge by being deleted.)
 
+## Nix CLI — 2026-08-09
+
+Added an `install.sh` section that installs the `nix` binary itself into
+cloud sessions (single-user, `--no-daemon`), separate from and unrelated to
+making this repo the nix config's source of truth (still deferred, below).
+Request was just "would be nice to have the nix cli available here."
+
+Tested live end-to-end in a sandbox matching the documented cloud image
+(root, Ubuntu, no systemd) before writing this up — not just `bash -n`:
+
+- Fresh install, idempotent re-run (second run: 0 written, skips reinstall,
+  doesn't duplicate `nix.conf` lines), symlink into the same writable bin dir
+  rtk uses, and a real `nix run nixpkgs#hello` against the installed
+  `/etc/nix/nix.conf` with no env-var workarounds — all passed.
+- **Found live, not from reading docs:** the official single-user installer
+  hard-errors installing as root (`the group 'nixbld' specified in
+  'build-users-group' does not exist`) even under `--no-daemon`. Fixed with
+  `NIX_CONFIG="build-users-group ="` at install time, and the same line
+  persisted into `nix.conf` — the error isn't install-time-only, any later
+  build that isn't a pure substituter hit reproduces it.
+- **Found live:** the installer's rc-file PATH wiring sources `nix.sh`, whose
+  entire body is guarded on `[ -n "$USER" ]`. In this sandbox `$USER` was
+  unset and `nix.sh` silently did nothing — `nix` looked installed
+  (`/nix` populated, `~/.nix-profile` linked) but wasn't on `$PATH` in a new
+  shell. Worked around by symlinking `nix` directly into the writable bin dir
+  rtk already uses, which depends on nothing rc-related. Confirmed with
+  `env -i PATH=... HOME=/root` that the plain `nix` binary needs nothing else
+  set — it finds Ubuntu's system CA bundle on its own.
+- Pin is a sha256 of the small per-version `install` dispatcher script at
+  `releases.nixos.org/nix/nix-$VERSION/install` (currently 2.35.1), not of the
+  `nix` binary itself — the dispatcher embeds and checks its own per-arch
+  tarball hash, so this one pin covers every architecture it supports.
+  `releases.nixos.org` was confirmed reachable and is covered by the
+  `*.nixos.org` Trusted-allowlist line already documented for rtk.
+- Channel subscribe+fetch is skipped (`NIX_INSTALLER_NO_CHANNEL_ADD=1`) —
+  slow against the setup budget and unnecessary once flakes are enabled.
+- The install/symlink/`nix.conf` block is gated on the single-user marker
+  path (`$HOME/.nix-profile/bin/nix`), not a bare `command -v nix`, so a
+  devcontainer's own pre-existing multi-user/daemon nix is never touched —
+  the `build-users-group =` override would be wrong for that case.
+
+**Not yet done:** run in an actual cloud session (same caveat as everything
+else in this repo — sandbox testing matched the documented image but is not
+the real thing). `PINNED_REF`/`CLAUDE_ENV_REF` still need bumping to roll this
+out per the usual two-step process in README "Security posture".
+
 ## Deferred
 
 Making this the source of truth for the nix config — add it as a flake input,

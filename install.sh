@@ -188,6 +188,17 @@ if [ "${#exec_files[@]}" -gt 0 ]; then
   chmod +x "${exec_files[@]}" 2>/dev/null
 fi
 
+# First writable dir already on a login PATH. Shared by rtk and nix below —
+# both land here instead of depending on a shell rc file getting sourced.
+writable_bindir() {
+  local d
+  for d in /usr/local/bin "$HOME/.local/bin"; do
+    mkdir -p "$d" 2>/dev/null
+    if [ -w "$d" ]; then echo "$d"; return 0; fi
+  done
+  return 1
+}
+
 # rtk: the PreToolUse Bash hook wants it. The hook is guarded and degrades to a
 # no-op, so every failure path here is survivable.
 if ! command -v rtk >/dev/null 2>&1; then
@@ -195,11 +206,7 @@ if ! command -v rtk >/dev/null 2>&1; then
   arch="$(uname -m)"
   vendored="$SRC/bin/rtk-$os-$arch"
 
-  rtkbin=""
-  for d in /usr/local/bin "$HOME/.local/bin"; do
-    mkdir -p "$d" 2>/dev/null
-    if [ -w "$d" ]; then rtkbin="$d"; break; fi
-  done
+  rtkbin="$(writable_bindir)"
 
   if [ -z "$rtkbin" ]; then
     echo "claude-env: no writable bin dir for rtk, skipping (hook degrades to a no-op)" >&2
@@ -234,6 +241,83 @@ fi
 # the repo's own documented discriminator (see claude/RTK.md).
 if command -v rtk >/dev/null 2>&1 && ! rtk gain >/dev/null 2>&1; then
   echo "claude-env: WARNING: $(command -v rtk) does not answer 'rtk gain' — probably the unrelated Rust Type Kit. The Bash hook will fall back to a no-op." >&2
+fi
+
+# nix CLI: not the user's nix config (that stays Mac-only, see the top of
+# README), just the `nix` binary itself, so `nix run`/`nix shell` work ad hoc
+# in a cloud session. Single-user (--no-daemon): a container has no systemd to
+# run nix-daemon under, and there is exactly one user here to isolate from
+# anyway. NIX_MARKER is the single-user profile path, not `command -v nix` —
+# a foreign multi-user/daemon nix (a devcontainer's own install, say) must be
+# left alone rather than have its nix.conf rewritten out from under it.
+NIX_VERSION="2.35.1"
+NIX_INSTALL_SHA256="34e0ef63ec1f3e552e15069660afd9a0a23f69009e340c33067595252888286c"
+NIX_MARKER="$HOME/.nix-profile/bin/nix"
+
+if [ ! -x "$NIX_MARKER" ] && ! command -v nix >/dev/null 2>&1; then
+  nix_installer="$TMP/nix-install.sh"
+  # releases.nixos.org, unlike GitHub release assets, is on the Trusted
+  # network allowlist (see the codeload gotcha in README) — why this is
+  # fetched directly rather than through codeload like the rest of this repo.
+  # The pinned sha is the `install` dispatcher only: it embeds a per-arch hash
+  # for the actual binary tarball and checks that itself, so one pin covers
+  # every platform the dispatcher knows about.
+  if curl -fsSL --proto '=https' --proto-redir '=https' --max-time 60 \
+       "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o "$nix_installer" 2>/dev/null \
+     && [ "$(sha256sum "$nix_installer" 2>/dev/null | cut -d' ' -f1)" = "$NIX_INSTALL_SHA256" ]; then
+    # NIX_INSTALLER_NO_CHANNEL_ADD: skips subscribing to and fetching the
+    # nixpkgs channel — slow against the ~5 min setup budget, and legacy:
+    # flakes (enabled below) resolve nixpkgs directly, no channel needed.
+    # NIX_CONFIG="build-users-group =": verified live — Nix 2.24+ hard-errors
+    # ("the group 'nixbld' specified in 'build-users-group' does not exist")
+    # installing as root without this, even in --no-daemon mode. A single-user
+    # root install has no use for a build-users group regardless.
+    if NIX_INSTALLER_NO_CHANNEL_ADD=1 NIX_CONFIG="build-users-group =" \
+         sh "$nix_installer" --no-daemon --yes >/dev/null 2>&1; then
+      echo "claude-env: installed nix $NIX_VERSION (single-user)" >&2
+    else
+      echo "claude-env: nix install failed, skipping (session continues without it)" >&2
+    fi
+  else
+    echo "claude-env: nix installer download or checksum mismatch, skipping" >&2
+  fi
+fi
+
+if [ -x "$NIX_MARKER" ]; then
+  # Verified live: the installer's own PATH wiring sources nix.sh from rc
+  # files, but nix.sh's entire body is guarded on `[ -n "$USER" ]` — silently
+  # a no-op in a shell that never exported it. Symlinking next to rtk does not
+  # depend on that, and the plain `nix` binary needs nothing else on $PATH:
+  # confirmed with `env -i` that it finds Ubuntu's system CA bundle itself and
+  # fetches/builds fine with no other env var set.
+  nixbin="$(writable_bindir)"
+  if [ -n "$nixbin" ]; then
+    ln -sf "$NIX_MARKER" "$nixbin/nix" 2>/dev/null
+  fi
+
+  # /etc/nix/nix.conf over the per-user config: this is a single-user root
+  # install, so there's only the one profile to configure, and /etc/nix
+  # applies no matter which $HOME a later shell happens to have.
+  if mkdir -p /etc/nix 2>/dev/null && [ -w /etc/nix ]; then
+    nixconf=/etc/nix/nix.conf
+  else
+    mkdir -p "$HOME/.config/nix" 2>/dev/null
+    nixconf="$HOME/.config/nix/nix.conf"
+  fi
+  touch "$nixconf" 2>/dev/null
+  # nix-command/flakes: unauthenticated `nix run`/`nix shell` are the
+  # "modern" CLI surface; without this they refuse to run at all.
+  grep -qs '^experimental-features' "$nixconf" 2>/dev/null \
+    || echo "experimental-features = nix-command flakes" >> "$nixconf" 2>/dev/null
+  # Persists the same build-users-group override past install time — every
+  # `nix build`/`nix run` that isn't a pure cache hit hits the same error
+  # otherwise, not just the installer's one-time `nix-env -i`.
+  grep -qs '^build-users-group' "$nixconf" 2>/dev/null \
+    || echo "build-users-group =" >> "$nixconf" 2>/dev/null
+fi
+
+if command -v nix >/dev/null 2>&1 && ! nix --version >/dev/null 2>&1; then
+  echo "claude-env: WARNING: $(command -v nix) does not answer 'nix --version'" >&2
 fi
 
 if [ "$failed" -gt 0 ]; then
