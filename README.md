@@ -4,8 +4,12 @@ A portable Claude Code user config. One `curl | bash` reconstructs `~/.claude`
 on any machine: a Claude Code cloud session VM, a plain Linux box, a
 devcontainer, CI.
 
-Nothing here depends on nix. The nix config on the Mac installs *binaries*
-(`rtk`, `terminal-notifier`, `stay-awake`); this repo carries *configuration*.
+This is not the user's nix config. The nix config on the Mac installs
+*binaries* (`rtk`, `terminal-notifier`, `stay-awake`); this repo carries
+*configuration*. `install.sh` does install the `nix` binary itself (see
+Gotchas) — that's a different thing, there so `nix run`/`nix shell` work ad
+hoc in a session, not a step toward making this the nix config's source of
+truth.
 
 ## What's in it
 
@@ -141,6 +145,38 @@ seem to have landed.
   erroring on every Bash call.
 - **ntfy topic is not hardcoded.** This repo is public and ntfy topics are
   unauthenticated. Set `CLAUDE_NTFY_TOPIC` or the channel stays off.
+- **nix is installed single-user, deliberately, and needs a config override
+  even so.** `--no-daemon`: a container has no systemd to run `nix-daemon`
+  under, and there's exactly one user (root) here to isolate from anyway. But
+  verified live — Nix 2.24+ still hard-errors installing as root under
+  `--no-daemon` (`the group 'nixbld' specified in 'build-users-group' does not
+  exist`) unless `build-users-group =` is set empty, and that has to be
+  written into `nix.conf` permanently, not just exported for the install
+  step — every later `nix build`/`nix run` that isn't a pure cache hit hits
+  the same error otherwise.
+- **The installer's own PATH wiring can silently no-op.** It sources
+  `nix.sh` from `~/.profile`/`~/.zshrc` at login, but `nix.sh`'s entire body
+  is guarded on `[ -n "$USER" ]` — verified live, with `$USER` unset it does
+  nothing and `nix` is simply missing from a shell that looks like it should
+  have it. `install.sh` doesn't depend on that: it symlinks `nix` straight
+  into the same writable bin dir rtk uses, same as rtk, so `$PATH` doesn't
+  depend on which rc file a given shell happens to source.
+- **The install script itself is pinned by sha256, not the nix version it
+  installs.** `releases.nixos.org/nix/nix-$VERSION/install` is a small
+  dispatcher, checksummed before it's run; it embeds a per-arch hash for the
+  real tarball and checks that itself, so one pin covers every platform it
+  knows about. `releases.nixos.org` (and `cache.nixos.org`,
+  `channels.nixos.org` for the flake registry and binary cache) are covered by
+  the `*.nixos.org` Trusted allowlist entry already used for rtk's install.
+- **The nixpkgs channel is skipped, on purpose.** `NIX_INSTALLER_NO_CHANNEL_ADD=1`
+  skips subscribing to and fetching it — slow against the ~5 min setup budget,
+  and legacy: flakes (enabled via `experimental-features = nix-command flakes`
+  in `nix.conf`) resolve nixpkgs directly, e.g. `nix run nixpkgs#hello`.
+- **A foreign nix is left alone.** The install/symlink/`nix.conf` block only
+  fires when `$HOME/.nix-profile/bin/nix` (this script's own single-user
+  marker) is absent — not on a bare `command -v nix` — so a devcontainer's own
+  multi-user/daemon nix never gets its `nix.conf` rewritten with a
+  single-user-only setting.
 - **Plugin pinning is looser than nix.** `extraKnownMarketplaces` pins by `ref`,
   not `sha`, and a plugin can ship hooks, skills and MCP servers — arbitrary code
   loaded at launch. Only `anthropics/claude-plugins-official` is configured for
