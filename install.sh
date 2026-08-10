@@ -35,7 +35,7 @@ set -uo pipefail
 # commit time and is therefore always at least one commit behind the file you
 # fetched. That mismatch installs a tree you did not review. PINNED_REF is a
 # last-resort floor for a caller that passes nothing, not the intended path.
-PINNED_REF="54855fc34578834feef8e50cbbd354df005c8382"
+PINNED_REF="0d501ede73c45e7ae496ecf3adc8b1729ec98212"
 
 REPO="${CLAUDE_ENV_REPO:-hedonicadapter/claude-env}"
 REF="${CLAUDE_ENV_REF:-$PINNED_REF}"
