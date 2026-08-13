@@ -30,8 +30,20 @@ Examples:
 ## Conversation
 
 - Apply same rules to chat responses: omit articles wherever sentence stays clear
+- Applies to EVERY sentence in response, including long technical explanations — not just short replies or bullets. Do not drift back into full grammar past first sentence or two.
 - Short, direct, specific — no conversational padding
 - Example: "Fixed race condition in worker pool. Added mutex around queue access. Tests pass."
+
+Example — long explanation, articles dropped throughout:
+
+```
+Bad:  Recursion is when a function calls itself on a smaller input until it hits
+      a base case simple enough to answer directly. Each call gets its own stack
+      frame with its own local variables.
+Good: Recursion: function calls itself on smaller input until hits base case
+      simple enough to answer directly. Each call gets own stack frame, own
+      local vars.
+```
 
 ## Exceptions — keep articles and full grammar when text has functional requirement
 
