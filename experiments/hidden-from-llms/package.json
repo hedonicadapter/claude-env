@@ -1,0 +1,14 @@
+{
+  "name": "hidden-from-llms",
+  "version": "1.0.0",
+  "description": "Verify with Crawlee whether web content invisible to HTTP-only fetchers is reachable with a real browser",
+  "type": "module",
+  "scripts": {
+    "crawl": "NODE_USE_ENV_PROXY=1 node crawl.mjs"
+  },
+  "dependencies": {
+    "crawlee": "^3.18.1",
+    "playwright": "^1.62.1"
+  },
+  "license": "ISC"
+}
