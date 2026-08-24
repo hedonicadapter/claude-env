@@ -13,7 +13,31 @@ offline_test.py headless render to chord.wav (no hardware needed)
 run.sh          venv setup + launch
 ```
 
-## Run
+## Run with Nix (recommended)
+
+`flake.nix` provides everything — Python, NumPy, PortAudio, and the MIDI stack
+— with no venv and no system packages to install.
+
+```bash
+cd synth
+
+nix run .                 # launch the synth (grabs first MIDI in + default audio)
+nix run . -- --list       # list audio output + MIDI input devices
+nix run . -- --midi MPK   # pick a MIDI port by name substring
+nix run . -- --device 3   # pick an audio output by index or name
+
+nix develop               # drop into a shell with all deps, then:
+python engine.py          #   run against the writable ./patch.py
+python offline_test.py    #   headless render, no hardware
+```
+
+Run `nix run .` **from inside `synth/`** (or `nix run ./synth` from the repo
+root): the engine loads `./patch.py` from your checkout, so saving it
+hot-reloads. Run from anywhere else and it falls back to the read-only copy in
+the nix store (plays, but no live reload) — or point it explicitly with
+`nix run . -- --patch /path/to/patch.py`.
+
+## Run with pip (no Nix)
 
 ```bash
 cd synth

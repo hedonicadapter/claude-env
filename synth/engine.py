@@ -7,7 +7,7 @@ reloads on save without dropping held notes or restarting audio.
 from __future__ import annotations
 
 import argparse
-import importlib
+import importlib.util
 import os
 import queue
 import sys
@@ -44,17 +44,27 @@ class Voice:
 
 
 class PatchHolder:
-    """Holds the current patch module. Watcher swaps `.mod` atomically (GIL);
-    a broken edit keeps the last good module so audio never dies."""
+    """Holds the current patch module, loaded from an explicit file path (not
+    sys.path) so a read-only engine — e.g. one built into the nix store — can
+    watch and reload a patch.py that lives in the user's writable checkout.
+    Watcher swaps `.mod` atomically (GIL); a broken edit keeps the last good
+    module so audio never dies."""
 
-    def __init__(self, name: str = "patch"):
-        self.name = name
-        self.mod = importlib.import_module(name)
+    def __init__(self, path: str):
+        self.path = os.path.abspath(path)
+        self.mod = self._load()
         self.mtime = self._mtime()
+
+    def _load(self):
+        spec = importlib.util.spec_from_file_location("patch", self.path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.render_voice  # fail fast if contract missing
+        return mod
 
     def _mtime(self) -> float:
         try:
-            return os.path.getmtime(self.mod.__file__)
+            return os.path.getmtime(self.path)
         except OSError:
             return 0.0
 
@@ -64,10 +74,8 @@ class PatchHolder:
             return
         self.mtime = m
         try:
-            newmod = importlib.reload(self.mod)
-            newmod.render_voice  # fail fast if contract missing
-            self.mod = newmod
-            print(f"[reload] patch.py loaded {time.strftime('%H:%M:%S')}")
+            self.mod = self._load()
+            print(f"[reload] {self.path} loaded {time.strftime('%H:%M:%S')}")
         except Exception:
             print("[reload] FAILED — keeping previous patch:")
             traceback.print_exc()
@@ -150,11 +158,23 @@ def list_devices():
         print(" ", n)
 
 
-def run(midi_name: str | None, out_device):
+def resolve_patch(explicit: str | None) -> str:
+    """Find patch.py to load+watch. Priority: --patch, $SYNTH_PATCH, ./patch.py,
+    ./synth/patch.py, then the copy next to this engine. Prefers the working
+    tree so a nix-store engine reloads edits you can actually make."""
+    for cand in (explicit, os.environ.get("SYNTH_PATCH"),
+                 "patch.py", os.path.join("synth", "patch.py"),
+                 os.path.join(os.path.dirname(os.path.abspath(__file__)), "patch.py")):
+        if cand and os.path.isfile(cand):
+            return cand
+    sys.exit("No patch.py found. Pass --patch PATH or run from the repo.")
+
+
+def run(midi_name: str | None, out_device, patch_path: str):
     import sounddevice as sd
     import mido
     stop = threading.Event()
-    holder = PatchHolder()
+    holder = PatchHolder(patch_path)
     events: queue.Queue = queue.Queue()
     ctrl = {"bend": 0.0, "sustain": False}
 
@@ -175,7 +195,7 @@ def run(midi_name: str | None, out_device):
     print(f"MIDI in : {port}")
     print("Audio   :", sd.query_devices(out_device, "output")["name"]
           if out_device is not None else "default")
-    print("Editing : synth/patch.py  (save to hot-reload)\nCtrl-C to stop.\n")
+    print(f"Editing : {holder.path}  (save to hot-reload)\nCtrl-C to stop.\n")
 
     with mido.open_input(port, callback=on_midi), sd.OutputStream(
         samplerate=SAMPLE_RATE, blocksize=BLOCK, channels=CHANNELS,
@@ -195,6 +215,7 @@ def main():
     ap.add_argument("--list", action="store_true", help="list audio + MIDI devices")
     ap.add_argument("--midi", help="substring of MIDI input port name")
     ap.add_argument("--device", help="audio output device (name or index)")
+    ap.add_argument("--patch", help="path to the patch.py to load and hot-reload")
     args = ap.parse_args()
     if args.list:
         list_devices()
@@ -202,10 +223,8 @@ def main():
     dev = args.device
     if dev is not None and dev.isdigit():
         dev = int(dev)
-    run(args.midi, dev)
+    run(args.midi, dev, resolve_patch(args.patch))
 
 
 if __name__ == "__main__":
-    # run from repo root or synth/: make patch.py importable
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     main()
