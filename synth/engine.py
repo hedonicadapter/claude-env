@@ -181,9 +181,17 @@ def run(midi_name: str | None, out_device, patch_path: str):
     names = mido.get_input_names()
     if not names:
         sys.exit("No MIDI inputs found. Plug in a keyboard, or run --list.")
-    port = midi_name or names[0]
     if midi_name:
-        port = next((n for n in names if midi_name.lower() in n.lower()), names[0])
+        port = next((n for n in names if midi_name.lower() in n.lower()), None)
+        if port is None:
+            sys.exit(f"No MIDI input matches {midi_name!r}. Available:\n  "
+                     + "\n  ".join(names))
+    else:
+        # auto-pick: skip ALSA "Midi Through" and virtual RtMidi loopbacks —
+        # they carry no keyboard data. Fall back to first if only those exist.
+        real = [n for n in names if "through" not in n.lower()
+                and "rtmidi" not in n.lower()]
+        port = (real or names)[0]
 
     threading.Thread(target=watcher, args=(holder, stop), daemon=True).start()
     cb = make_callback(holder, events, ctrl)
