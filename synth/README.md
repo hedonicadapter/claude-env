@@ -86,6 +86,66 @@ edit keeps every held voice's phase and envelope continuous — you hear the new
 timbre without a click. The included patch is a 3-saw supersaw → ADSR →
 one-pole lowpass; replace it with whatever you want.
 
+## Play in Logic Pro while Claude tweaks the sound live (macOS)
+
+This is the "you play, Claude changes the sound on request" setup. The synth
+runs as a separate app, but its audio is piped into a Logic track (so you get
+recording and Logic's effects), and Claude's edits reach your Mac over git and
+hot-reload while you hold a chord.
+
+### One-time setup
+
+**A. Route MIDI into the synth (IAC).** IAC is macOS's built-in "virtual MIDI
+cable". Open *Audio MIDI Setup* → *Window ▸ Show MIDI Studio* → double-click
+*IAC Driver* → check **Device is online**.
+
+**B. Route the synth's audio back into Logic (BlackHole).** BlackHole is a free
+virtual audio cable. Install it:
+
+```bash
+brew install blackhole-2ch
+```
+
+**C. Let Logic use your speakers and BlackHole at once (Aggregate Device).** In
+*Audio MIDI Setup* click **+ ▸ Create Aggregate Device**, then tick both your
+normal output (e.g. *MacBook Speakers* or your interface) **and** *BlackHole
+2ch*. In Logic: *Settings ▸ Audio* → set both **Output** and **Input** to this
+aggregate device.
+
+**D. Add the synth as a track in Logic.** New *Software Instrument* track →
+click the instrument slot → *AU Instruments ▸ (Apple) ▸ External Instrument*.
+In it set:
+- **MIDI Destination** = *IAC Bus 1*
+- **Input** = the *BlackHole* channels
+
+### Each session
+
+1. Start the synth, listening to IAC and playing out through BlackHole:
+   ```bash
+   cd synth
+   nix run . -- --midi IAC --device BlackHole
+   ```
+2. In another terminal, start the live sync so Claude's pushes reach you:
+   ```bash
+   ./synth/live-sync.sh
+   ```
+3. Arm/monitor the Logic track and play your keyboard. Sound flows:
+   **your keys → Logic → IAC → synth → BlackHole → Logic track → speakers.**
+4. Tell Claude what to change ("brighter", "longer release", "detune the
+   saws"). Claude edits `patch.py` and pushes; `live-sync.sh` pulls it within
+   ~2s; the synth reloads with no dropped notes.
+
+### Good to know
+
+- Tweaks take a couple of seconds (a git round-trip) — great for "make it
+  X", not for per-note automation.
+- It is **not** a real plugin and **not** locked to Logic's clock; it's a
+  separate audio engine bridged in. For most "jam and shape the tone" use you
+  won't notice.
+- If playback glitches, raise Logic's *Settings ▸ Audio ▸ I/O Buffer Size*.
+- Only Claude should edit `patch.py` while `live-sync.sh` runs; your own edits
+  to that file get overwritten on the next pull.
+
 ## How hot reload works
 
 - **Engine (`engine.py`)** never needs restarting. It parses MIDI on one thread
