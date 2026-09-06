@@ -103,7 +103,7 @@ cable". Open *Audio MIDI Setup* → *Window ▸ Show MIDI Studio* → double-cli
 virtual audio cable. Install it:
 
 ```bash
-brew install blackhole-2ch
+brew install --cask blackhole-2ch
 ```
 
 **C. Let Logic use your speakers and BlackHole at once (Aggregate Device).** In
