@@ -20,9 +20,9 @@ opencode/
 ├── AGENTS.md                  memory (RTK + TERSE, folded from CLAUDE.md)
 ├── rate-limit-fallback.json   auto-switch-on-429 config
 ├── command/commit-slices.md   ported /commit-slices (partial — see MIGRATION.md)
-├── plugin/
-│   ├── notify.ts              ntfy on session idle/error (ports notify.sh)
-│   └── rtk.ts                 best-effort bash rewrite (ports the rtk hook)
+├── plugins/
+│   └── notify.ts              ntfy on session idle/error (ports notify.sh)
+│                              (rtk.ts generated at build by `rtk init -g --opencode`)
 ├── Dockerfile                 App Service container image
 ├── entrypoint.sh              starts `opencode web` on :8080
 ├── DEPLOY-AZURE.md            full deploy runbook (Entra auth + one-time OAuth)

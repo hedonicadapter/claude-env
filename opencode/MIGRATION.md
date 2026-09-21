@@ -14,11 +14,11 @@ Read this before trusting any single piece.
 | `settings.json` → `permissions.deny` (secret file reads) | partial `permission.bash` denies | **Partial.** OpenCode gates *tools* (bash/edit/webfetch), not file **reads**. The `Read(./.env)` etc. denies have no direct equivalent. Mitigations: keep secrets out of `/home/workspace`, or write a `permission.asked` plugin that blocks reads by path. |
 | `extraKnownMarketplaces` + `code-simplifier@official` | — | **Dropped.** No Claude plugin marketplace in OpenCode. Reimplement as an OpenCode `agent` or `command` if wanted. |
 | `CLAUDE.md` / `RTK.md` / `TERSE.md` | `AGENTS.md` | **Clean** |
-| Hook: PreToolUse `rtk hook claude` | `plugin/rtk.ts` | **Partial.** rtk has no OpenCode hook mode; plugin prefixes known verbs with `rtk `. No full command coverage / output-format guarantee. |
+| Hook: PreToolUse `rtk hook claude` | rtk's official OpenCode plugin (`rtk init -g --opencode` → `plugins/rtk.ts`, baked at build) | **Clean.** Same `tool.execute.before` transparent Bash rewrite as Claude Code; verified by `rtk gain`. |
 | Hook: PostToolUse `track-edits.py` | — | **Not ported.** Script parses Claude-Code hook JSON and spawns nested `claude -p`. Needs a shim reading OpenCode's `tool.execute.after` / `file.edited` payloads instead. |
 | Hook: UserPromptSubmit `terse-reminder.py` | folded into `AGENTS.md` | **Clean** (replaced by persistent instruction) |
 | Hook: SessionStart `self-update.sh` | — | **N/A.** Container config is immutable; "update" = rebuild+redeploy the image (`az acr build` then `az webapp restart`). |
-| Hook: Notification/Stop `notify.sh` | `plugin/notify.ts` | **Clean** (ntfy only; macOS `terminal-notifier` path dropped — host is Linux) |
+| Hook: Notification/Stop `notify.sh` | `plugins/notify.ts` | **Clean** (ntfy only; macOS `terminal-notifier` path dropped — host is Linux) |
 | `commands/commit-slices.md` | `command/commit-slices.md` | **Partial.** Depends on track-edits (above) + slice-commits scripts. Runs, but `$STORE` is empty until the track-edits shim exists → everything lands in one `uncategorized` slice. |
 | `skills/slice-commits/` | — | **Not ported.** OpenCode has no "skills". The `hunk_slice.py` script can be dropped into `~/.config/opencode/skills/slice-commits/scripts/` and called by the command as-is; grouping logic lives in the command prompt. |
 | `install.sh` (`curl \| bash` rebuild `~/.claude`) | `Dockerfile` + `DEPLOY-AZURE.md` | **Replaced.** Reproducibility now comes from the pinned image, not a setup script. |
@@ -52,7 +52,7 @@ Vendor it one of two ways:
 # A) if published to npm — add to opencode.json "plugin": ["opencode-rate-limit-fallback"]
 # B) vendor locally into the config tree:
 git clone https://github.com/liamvinberg/opencode-rate-limit-fallback \
-  /opt/xdg-config/opencode/plugin/rate-limit-fallback
+  /opt/xdg-config/opencode/plugins/rate-limit-fallback
 ```
 
 Then rebuild the image. Verify the plugin's expected config keys against its
@@ -71,5 +71,5 @@ model you pick.
    they differ from the 2026-09 guesses.
 2. `opencode auth list` → `github-copilot` present.
 3. Send one prompt; confirm terse style holds and `rtk gain` shows nonzero
-   savings (proves `plugin/rtk.ts` fires).
+   savings (proves the generated `plugins/rtk.ts` fires).
 4. Trigger `session.idle` and confirm an ntfy push if `NTFY_TOPIC` is set.

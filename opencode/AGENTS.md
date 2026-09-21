@@ -40,7 +40,8 @@ rtk proxy <cmd>       # raw command, no filtering (debugging)
 Verify install: `rtk --version`, `rtk gain`, `which rtk`. Name collision: if
 `rtk gain` fails you likely have reachingforthejack/rtk (Rust Type Kit) instead.
 
-Bash rewriting is best-effort in OpenCode via `plugin/rtk.ts` (see MIGRATION.md).
-The Claude Code `rtk hook claude` integration does not exist for OpenCode; the
-plugin prefixes known verbs with `rtk ` instead. If `rtk` is absent or the wrong
-binary, the plugin no-ops.
+Bash rewriting uses rtk's official OpenCode integration: `rtk init -g --opencode`
+generates `~/.config/opencode/plugins/rtk.ts`, which hooks `tool.execute.before`
+and transparently routes Bash commands through rtk (e.g. `git status` →
+`rtk git status`). The model sees full output; rtk compresses it. Applies to the
+Bash tool only. Baked at image build (see Dockerfile).
