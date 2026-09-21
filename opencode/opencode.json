@@ -1,0 +1,46 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "//model": "Primary = Claude via your GitHub Copilot license (sanctioned). Verify exact slugs with `opencode models`; slugs below are best-guess as of 2026-09 and change.",
+  "model": "github-copilot/claude-sonnet-4.5",
+  "small_model": "github-copilot/gpt-4.1",
+
+  "provider": {
+    "github-copilot": {
+      "//": "Auth via device OAuth: `opencode auth login` -> GitHub Copilot. Uses your Copilot subscription; no API key. Exposes Claude + GPT + Gemini."
+    },
+    "anthropic": {
+      "//": "OPTIONAL switchable fallback. `opencode auth login` -> Anthropic -> Claude Pro/Max. WARNING: Anthropic prohibits subscription use in third-party tools; may be blocked/break. Prefer a Claude API key here, or reach Claude via github-copilot above. Leave unauthenticated to disable.",
+      "options": { "timeout": 600000 }
+    }
+  },
+
+  "instructions": ["AGENTS.md"],
+
+  "//permission": "OpenCode gates tools (bash/edit/webfetch), not file reads. Secret-read protection from claude/settings.json deny-list is NOT fully reproducible here — see MIGRATION.md. bash denies below are defense-in-depth only.",
+  "permission": {
+    "edit": "allow",
+    "webfetch": "allow",
+    "bash": {
+      "*": "allow",
+      "cat *.env*": "deny",
+      "cat *.pem": "deny",
+      "cat *id_rsa*": "deny",
+      "cat *.tfvars": "deny",
+      "cat secrets/*": "deny",
+      "cat ~/.ssh/*": "deny",
+      "cat ~/.aws/*": "deny",
+      "rm -rf /*": "deny"
+    }
+  },
+
+  "plugin": [
+    "./plugin/notify.ts",
+    "./plugin/rtk.ts"
+  ],
+
+  "//fallback": "Auto-switch on rate limit is handled by the community plugin opencode-rate-limit-fallback (vendored/loaded separately) reading rate-limit-fallback.json. See MIGRATION.md. Manual switch: Ctrl+M in TUI/web.",
+
+  "autoupdate": false,
+  "share": "disabled"
+}

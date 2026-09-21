@@ -1,0 +1,6 @@
+README.md
+DEPLOY-AZURE.md
+MIGRATION.md
+*.log
+node_modules
+.git

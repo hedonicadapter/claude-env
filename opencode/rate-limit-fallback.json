@@ -1,0 +1,12 @@
+{
+  "//": "Config for opencode-rate-limit-fallback plugin. On a rate-limit/quota error it aborts the retry, reverts the failed attempt, and resends the same message on the fallback model — conversation history stays clean. See MIGRATION.md for how to vendor the plugin.",
+
+  "//primary": "Your default model comes from opencode.json (github-copilot/claude-sonnet-4.5).",
+
+  "fallbackModel": "github-copilot/gpt-5",
+
+  "//fallbackModel_note": "Sanctioned fallback: stays inside your Copilot license. To fall back to your direct Anthropic subscription instead, set 'anthropic/claude-sonnet-4-5' AND authenticate that provider (`opencode auth login`), accepting the ToS caveat in MIGRATION.md.",
+
+  "patterns": ["rate limit", "quota exceeded", "429", "overloaded", "too many requests"],
+  "cooldownMs": 60000
+}
