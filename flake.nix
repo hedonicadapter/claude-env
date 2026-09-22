@@ -9,9 +9,24 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
+      nixosConfigurations = {
+        azure-aarch64 = nixpkgs.lib.nixosSystem {
+          system = "aarch64-linux";
+          modules = [ ./nixos/azure-image.nix ];
+        };
+        azure-x86_64 = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          modules = [ ./nixos/azure-image.nix ];
+        };
+      };
+
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+          azureImage = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [ ./nixos/azure-image.nix ];
+          };
           opencodeConfig = pkgs.writeText "opencode.json" (builtins.readFile ./opencode/opencode.json);
           opencodeUnit = pkgs.writeText "opencode-web@.service" ''
             [Unit]
@@ -56,6 +71,7 @@
           };
 
           systemd-unit = opencodeUnit;
+          azure-image = azureImage.config.system.build.azureImage;
         });
     };
 }

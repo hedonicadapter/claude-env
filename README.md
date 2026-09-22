@@ -147,6 +147,36 @@ Then access OpenCode through the tailnet URL reported by `tailscale serve
 status`. Every reboot follows `main`. To pin a reviewed revision instead,
 replace `main` in the installed unit with a commit SHA and reload systemd.
 
+### NixOS Azure VM
+
+`nixos/azure.nix` is the replacement-host configuration. It has feature parity
+with this Ubuntu VM without a boot-time GitHub evaluation: NixOS declaratively
+installs Tailscale and OpenCode, runs OpenCode as the dedicated unprivileged
+`opencode` user, binds it to `127.0.0.1:8080`, and configures Tailscale Serve on
+tailnet HTTPS port 443. OpenCode's mutable OAuth data is persisted in
+`/var/lib/opencode`; agent workspaces are persisted in `/srv/workspace`.
+
+Build an Azure Gen 2 VHD for the target architecture from a Linux builder:
+
+```bash
+nix build github:hedonicadapter/claude-env/main#azure-image
+```
+
+Upload the `.vhd` file in `result/` to Azure and create the VM with Secure Boot
+disabled (the image is configured for Azure Generation 2). Azure cloud-init
+supplies the initial SSH user and key. After first login, authenticate the node
+and OpenCode:
+
+```bash
+sudo tailscale up
+sudo -u opencode HOME=/var/lib/opencode opencode auth login
+sudo systemctl restart opencode-web.service tailscale-opencode-serve.service
+```
+
+Check the tailnet endpoint with `tailscale serve status`. For unattended
+Tailscale enrollment, keep an auth key outside this public repository and set
+`services.tailscale.authKeyFile` in a private host module.
+
 ## How it behaves in a cloud session
 
 Verified against a live session: `$HOME` is `/root`, `~/.claude` is the config
