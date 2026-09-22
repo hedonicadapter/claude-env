@@ -162,6 +162,10 @@ Build an Azure Gen 2 VHD for the target architecture from a Linux builder:
 nix build github:hedonicadapter/claude-env/main#azure-image
 ```
 
+The image target explicitly falls back to QEMU software emulation when the
+builder lacks nested KVM, as is common for Azure VMs. The build is therefore
+slower but does not require `/dev/kvm`.
+
 Upload the `.vhd` file in `result/` to Azure and create the VM with Secure Boot
 disabled (the image is configured for Azure Generation 2). Azure cloud-init
 supplies the initial SSH user and key. After first login, authenticate the node

@@ -27,6 +27,11 @@
             inherit system;
             modules = [ ./nixos/azure-image.nix ];
           };
+          azureImageWithoutKvm = nixpkgs.lib.overrideDerivation azureImage.config.system.build.azureImage (_: {
+            # make-disk-image selects QEMU's TCG software emulation when KVM is
+            # unavailable; Azure VMs generally do not expose nested KVM.
+            requiredSystemFeatures = [ ];
+          });
           opencodeConfig = pkgs.writeText "opencode.json" (builtins.readFile ./opencode/opencode.json);
           opencodeUnit = pkgs.writeText "opencode-web@.service" ''
             [Unit]
@@ -71,7 +76,7 @@
           };
 
           systemd-unit = opencodeUnit;
-          azure-image = azureImage.config.system.build.azureImage;
+          azure-image = azureImageWithoutKvm;
         });
     };
 }
