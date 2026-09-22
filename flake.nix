@@ -30,8 +30,6 @@
             ExecStart=${pkgs.opencode}/bin/opencode web --hostname 127.0.0.1 --port 8080
             Restart=always
             RestartSec=5
-            NoNewPrivileges=true
-
             [Install]
             WantedBy=multi-user.target
           '';
