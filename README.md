@@ -106,25 +106,28 @@ not a NixOS configuration: Ubuntu continues to own the privileged Tailscale
 package and daemon, while Nix produces the OpenCode binary, its declarative
 configuration, and a systemd service definition.
 
-After installing Nix with flakes enabled, deploy a reviewed commit as the VM
-user:
+After installing Nix with flakes enabled, install the root-owned systemd unit
+once from a trusted SSH shell:
 
 ```bash
-nix run github:hedonicadapter/claude-env/<commit-sha>#bootstrap
+sudo install -Dm644 \
+  "$(nix build --no-link --print-out-paths github:hedonicadapter/claude-env/main#systemd-unit)" \
+  /etc/systemd/system/opencode-web@.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now tailscaled.service opencode-web@buster.service
 ```
 
-The bootstrap requests `sudo` only to install and enable the systemd units and
-to enable `tailscaled.service`. On every boot,
-`claude-env-refresh@<user>.service` runs:
+On every boot, `opencode-web@<user>.service` runs this exact command as that
+unprivileged user:
 
 ```bash
-nix run github:hedonicadapter/claude-env/main#bootstrap <user>
+nix run github:hedonicadapter/claude-env/main#serve
 ```
 
-It runs before `opencode-web@<user>.service`; if the refresh cannot reach
-GitHub or the Nix cache, the last installed OpenCode service still starts. A
-manual deployment updates the unit for the next boot; restart
-`opencode-web@<user>.service` to apply it immediately. The OpenCode service:
+The root-owned unit only supervises this process and starts it after Tailscale.
+It has `NoNewPrivileges=true`, no Linux capabilities, and no path to `sudo`.
+If GitHub or the Nix cache is unreachable, systemd retries the unprivileged
+process; no privileged fallback or update path exists. The OpenCode service:
 
 - starts after Tailscale and listens only on `127.0.0.1:8080`;
 - reads the immutable `opencode/opencode.json` built from this repository via
@@ -141,8 +144,8 @@ tailscale serve --bg 8080
 ```
 
 Then access OpenCode through the tailnet URL reported by `tailscale serve
-status`. Every reboot follows `main`; use an explicit commit SHA in the manual
-command above when testing or rolling out a reviewed revision before merging.
+status`. Every reboot follows `main`. To pin a reviewed revision instead,
+replace `main` in the installed unit with a commit SHA and reload systemd.
 
 ## How it behaves in a cloud session
 
