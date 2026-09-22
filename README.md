@@ -99,6 +99,51 @@ copied to `~/.claude/.claude-env-backup/` first and the run tells you how many
 files that happened to. Re-runs are no-ops for unchanged files, so that backup
 is never overwritten by a later install.
 
+### Azure VM: Tailscale and OpenCode
+
+This repository also supplies a Nix deployment for the Ubuntu Azure VM. It is
+not a NixOS configuration: Ubuntu continues to own the privileged Tailscale
+package and daemon, while Nix produces the OpenCode binary, its declarative
+configuration, and a systemd service definition.
+
+After installing Nix with flakes enabled, deploy a reviewed commit as the VM
+user:
+
+```bash
+nix run github:hedonicadapter/claude-env/<commit-sha>#bootstrap
+```
+
+The bootstrap requests `sudo` only to install and enable the systemd units and
+to enable `tailscaled.service`. On every boot,
+`claude-env-refresh@<user>.service` runs:
+
+```bash
+nix run github:hedonicadapter/claude-env/main#bootstrap <user>
+```
+
+It runs before `opencode-web@<user>.service`; if the refresh cannot reach
+GitHub or the Nix cache, the last installed OpenCode service still starts. A
+manual deployment updates the unit for the next boot; restart
+`opencode-web@<user>.service` to apply it immediately. The OpenCode service:
+
+- starts after Tailscale and listens only on `127.0.0.1:8080`;
+- reads the immutable `opencode/opencode.json` built from this repository via
+  `OPENCODE_CONFIG`;
+- restarts on failure and starts at boot;
+- leaves OpenCode OAuth tokens and Tailscale node state in their normal,
+  mutable locations under the user home and `/var/lib/tailscale`.
+
+Tailscale Serve is intentionally not reset by the bootstrap. Configure its
+persisted proxy once, if it does not already exist:
+
+```bash
+tailscale serve --bg 8080
+```
+
+Then access OpenCode through the tailnet URL reported by `tailscale serve
+status`. Every reboot follows `main`; use an explicit commit SHA in the manual
+command above when testing or rolling out a reviewed revision before merging.
+
 ## How it behaves in a cloud session
 
 Verified against a live session: `$HOME` is `/root`, `~/.claude` is the config

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "github-copilot/claude-sonnet-4.5",
+  "small_model": "github-copilot/gpt-4.1",
+  "provider": {
+    "github-copilot": {},
+    "anthropic": {
+      "options": {
+        "timeout": 600000
+      }
+    }
+  },
+  "instructions": ["AGENTS.md"],
+  "permission": {
+    "edit": "allow",
+    "webfetch": "allow",
+    "bash": {
+      "*": "allow",
+      "cat *.env*": "deny",
+      "cat *.pem": "deny",
+      "cat *id_rsa*": "deny",
+      "cat *.tfvars": "deny",
+      "cat secrets/*": "deny",
+      "cat ~/.ssh/*": "deny",
+      "cat ~/.aws/*": "deny",
+      "rm -rf /*": "deny"
+    }
+  },
+  "autoupdate": false,
+  "share": "disabled"
+}
