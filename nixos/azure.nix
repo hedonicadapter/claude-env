@@ -49,7 +49,7 @@ in
         "XDG_CONFIG_HOME=/var/lib/opencode/.config"
         "OPENCODE_CONFIG=${opencodeConfig}"
       ];
-      ExecStart = "${pkgs.opencode}/bin/opencode web --hostname 127.0.0.1 --port 8080";
+      ExecStart = "${pkgs.opencode}/bin/opencode serve --hostname 127.0.0.1 --port 8080";
       Restart = "always";
       RestartSec = "5s";
 
