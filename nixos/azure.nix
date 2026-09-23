@@ -39,6 +39,7 @@ in
     "d /srv/workspace 2770 buster workspace -"
     "a+ /srv/workspace - - - - u::rwx,g::rwx,g:workspace:rwx,o::---,d:u::rwx,d:g::rwx,d:g:workspace:rwx,d:o::---"
     "L+ /home/buster/workspace - - - - /srv/workspace"
+    "L+ /var/lib/opencode/workspace - - - - /srv/workspace"
   ];
 
   systemd.services.opencode-web = {
@@ -52,7 +53,7 @@ in
       Type = "simple";
       User = "opencode";
       Group = "workspace";
-      WorkingDirectory = "/srv/workspace";
+      WorkingDirectory = "/var/lib/opencode/workspace";
       Environment = [
         "HOME=/var/lib/opencode"
         "XDG_CONFIG_HOME=/var/lib/opencode/.config"
