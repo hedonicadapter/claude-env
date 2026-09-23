@@ -45,7 +45,7 @@ in
     serviceConfig = {
       Type = "simple";
       User = "opencode";
-      Group = "opencode";
+      Group = "workspace";
       WorkingDirectory = "/srv/workspace";
       Environment = [
         "HOME=/var/lib/opencode"
