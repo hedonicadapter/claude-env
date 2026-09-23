@@ -12,19 +12,30 @@
   },
   "instructions": ["AGENTS.md"],
   "permission": {
+    "read": {
+      "*": "allow",
+      ".env": "deny",
+      ".env.*": "deny",
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "**/*.pem": "deny",
+      "**/*.key": "deny",
+      "**/*.p12": "deny",
+      "**/*.pfx": "deny",
+      "**/*_rsa": "deny",
+      "**/*_dsa": "deny",
+      "**/*_ecdsa": "deny",
+      "**/*_ed25519": "deny",
+      "**/*.tfvars": "deny",
+      "secrets/**": "deny",
+      "**/secrets/**": "deny",
+      "~/.ssh/**": "deny",
+      "~/.aws/**": "deny",
+      "~/.config/gh/**": "deny"
+    },
     "edit": "allow",
     "webfetch": "allow",
-    "bash": {
-      "*": "allow",
-      "cat *.env*": "deny",
-      "cat *.pem": "deny",
-      "cat *id_rsa*": "deny",
-      "cat *.tfvars": "deny",
-      "cat secrets/*": "deny",
-      "cat ~/.ssh/*": "deny",
-      "cat ~/.aws/*": "deny",
-      "rm -rf /*": "deny"
-    }
+    "bash": "ask"
   },
   "autoupdate": false,
   "share": "disabled"

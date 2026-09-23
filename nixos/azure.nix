@@ -1,7 +1,13 @@
 { config, lib, modulesPath, pkgs, ... }:
 
 let
-  opencodeConfig = pkgs.writeText "opencode.json" (builtins.readFile ../opencode/opencode.json);
+  rtkPlugin = pkgs.writeText "rtk.ts" (builtins.readFile ../opencode/plugins/rtk.ts);
+  terseInstructions = pkgs.writeText "TERSE.md" (builtins.readFile ../opencode/TERSE.md);
+  baseOpencodeConfig = builtins.fromJSON (builtins.readFile ../opencode/opencode.json);
+  opencodeConfig = pkgs.writeText "opencode.json" (builtins.toJSON (baseOpencodeConfig // {
+    instructions = baseOpencodeConfig.instructions ++ [ terseInstructions ];
+    plugin = [ "file://${rtkPlugin}" ];
+  }));
 in
 {
   imports = [ "${modulesPath}/virtualisation/azure-common.nix" ];
@@ -40,7 +46,7 @@ in
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" "tailscaled.service" ];
     after = [ "network-online.target" "tailscaled.service" ];
-    path = [ pkgs.git pkgs.gh ];
+    path = [ pkgs.git pkgs.gh pkgs.rtk ];
 
     serviceConfig = {
       Type = "simple";
@@ -99,5 +105,5 @@ in
     };
   };
 
-  environment.systemPackages = [ pkgs.git pkgs.gh pkgs.opencode ];
+  environment.systemPackages = [ pkgs.git pkgs.gh pkgs.opencode pkgs.rtk ];
 }

@@ -203,6 +203,12 @@ sudo -u opencode -H env HOME=/var/lib/opencode gh auth login
 The OpenCode token is stored only under `/var/lib/opencode`; it is not exposed
 to the SSH administrator account.
 
+OpenCode uses the repository's `opencode/TERSE.md` as a declarative instruction
+file. RTK is installed from nixpkgs and its OpenCode plugin rewrites shell
+commands before execution. Credential-like files are denied through OpenCode's
+`read` permission rules; shell commands require explicit approval so they cannot
+bypass that policy with another file-reading program.
+
 ## How it behaves in a cloud session
 
 Verified against a live session: `$HOME` is `/root`, `~/.claude` is the config
