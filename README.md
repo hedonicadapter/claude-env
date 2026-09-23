@@ -191,8 +191,10 @@ public key in this public repository. Provision it through Azure or a private
 host module before first SSH login.
 
 `/srv/workspace` is shared by `buster` and `opencode`; it appears as
-`~/workspace` when logged in as `buster`. The setgid workspace directory keeps
-new files in the shared group. Git and GitHub CLI are installed system-wide.
+`~/workspace` when logged in as `buster` and as `~/workspace` in OpenCode's
+web UI through a service-private bind mount. The setgid workspace directory
+keeps new files in the shared group. Git and GitHub CLI are installed
+system-wide.
 Authenticate GitHub separately for each account that needs it:
 
 ```bash

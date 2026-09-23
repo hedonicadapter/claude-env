@@ -39,8 +39,14 @@ in
     "d /srv/workspace 2770 buster workspace -"
     "a+ /srv/workspace - - - - u::rwx,g::rwx,g:workspace:rwx,o::---,d:u::rwx,d:g::rwx,d:g:workspace:rwx,d:o::---"
     "L+ /home/buster/workspace - - - - /srv/workspace"
-    "L+ /var/lib/opencode/workspace - - - - /srv/workspace"
+    "d /var/lib/opencode/workspace 0770 opencode workspace -"
   ];
+
+  system.activationScripts.opencodeWorkspaceMigration.text = ''
+    if [ -L /var/lib/opencode/workspace ]; then
+      rm /var/lib/opencode/workspace
+    fi
+  '';
 
   systemd.services.opencode-web = {
     description = "OpenCode web server";
@@ -86,6 +92,7 @@ in
       UMask = "0007";
       StateDirectory = "opencode";
       ReadWritePaths = [ "/srv/workspace" ];
+      BindPaths = [ "/srv/workspace:/var/lib/opencode/workspace" ];
     };
   };
 
