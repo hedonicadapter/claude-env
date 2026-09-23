@@ -181,6 +181,11 @@ Check the tailnet endpoint with `tailscale serve status`. For unattended
 Tailscale enrollment, keep an auth key outside this public repository and set
 `services.tailscale.authKeyFile` in a private host module.
 
+The declared administrator is `buster`, a passwordless `wheel` user; OpenCode
+continues to run as the separate, non-admin `opencode` user. Do not put an SSH
+public key in this public repository. Provision it through Azure or a private
+host module before first SSH login.
+
 ## How it behaves in a cloud session
 
 Verified against a live session: `$HOME` is `/root`, `~/.claude` is the config

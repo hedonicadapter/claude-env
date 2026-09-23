@@ -13,6 +13,14 @@ in
     openFirewall = true;
   };
 
+  # The administrator's public key is provisioned out-of-band by Azure or a
+  # private host module. OpenCode runs as a separate, non-admin system user.
+  users.users.buster = {
+    isNormalUser = true;
+    extraGroups = [ "wheel" ];
+  };
+  security.sudo.wheelNeedsPassword = false;
+
   users.groups.opencode = { };
   users.users.opencode = {
     isSystemUser = true;
