@@ -190,6 +190,19 @@ continues to run as the separate, non-admin `opencode` user. Do not put an SSH
 public key in this public repository. Provision it through Azure or a private
 host module before first SSH login.
 
+`/srv/workspace` is shared by `buster` and `opencode`; it appears as
+`~/workspace` when logged in as `buster`. The setgid workspace directory keeps
+new files in the shared group. Git and GitHub CLI are installed system-wide.
+Authenticate GitHub separately for each account that needs it:
+
+```bash
+gh auth login
+sudo -u opencode -H env HOME=/var/lib/opencode gh auth login
+```
+
+The OpenCode token is stored only under `/var/lib/opencode`; it is not exposed
+to the SSH administrator account.
+
 ## How it behaves in a cloud session
 
 Verified against a live session: `$HOME` is `/root`, `~/.claude` is the config

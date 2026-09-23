@@ -17,20 +17,22 @@ in
   # private host module. OpenCode runs as a separate, non-admin system user.
   users.users.buster = {
     isNormalUser = true;
-    extraGroups = [ "wheel" ];
+    extraGroups = [ "wheel" "workspace" ];
   };
+  users.groups.workspace = { };
   security.sudo.wheelNeedsPassword = false;
 
-  users.groups.opencode = { };
   users.users.opencode = {
     isSystemUser = true;
-    group = "opencode";
+    group = "workspace";
     home = "/var/lib/opencode";
     createHome = true;
   };
 
   systemd.tmpfiles.rules = [
-    "d /srv/workspace 0750 opencode opencode -"
+    "d /srv/workspace 2770 buster workspace -"
+    "a+ /srv/workspace - - - - u::rwx,g::rwx,g:workspace:rwx,o::---,d:u::rwx,d:g::rwx,d:g:workspace:rwx,d:o::---"
+    "L+ /home/buster/workspace - - - - /srv/workspace"
   ];
 
   systemd.services.opencode-web = {
@@ -38,6 +40,7 @@ in
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" "tailscaled.service" ];
     after = [ "network-online.target" "tailscaled.service" ];
+    path = [ pkgs.git pkgs.gh ];
 
     serviceConfig = {
       Type = "simple";
@@ -73,7 +76,7 @@ in
       MemoryDenyWriteExecute = true;
       SystemCallArchitectures = "native";
       SystemCallFilter = [ "@system-service" "~@privileged" "~@resources" ];
-      UMask = "0077";
+      UMask = "0007";
       StateDirectory = "opencode";
       ReadWritePaths = [ "/srv/workspace" ];
     };
@@ -96,5 +99,5 @@ in
     };
   };
 
-  environment.systemPackages = [ pkgs.git pkgs.opencode ];
+  environment.systemPackages = [ pkgs.git pkgs.gh pkgs.opencode ];
 }
