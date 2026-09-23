@@ -181,6 +181,10 @@ Check the tailnet endpoint with `tailscale serve status`. For unattended
 Tailscale enrollment, keep an auth key outside this public repository and set
 `services.tailscale.authKeyFile` in a private host module.
 
+On a first boot, activate Tailscale with `sudo tailscale up` before starting
+`tailscale-opencode-serve`; it cannot configure a Serve endpoint while the
+node is logged out.
+
 The declared administrator is `buster`, a passwordless `wheel` user; OpenCode
 continues to run as the separate, non-admin `opencode` user. Do not put an SSH
 public key in this public repository. Provision it through Azure or a private
