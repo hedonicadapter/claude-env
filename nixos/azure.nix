@@ -3,6 +3,10 @@
 let
   rtkPlugin = pkgs.writeText "rtk.ts" (builtins.readFile ../opencode/plugins/rtk.ts);
   terseInstructions = pkgs.writeText "TERSE.md" (builtins.readFile ../opencode/TERSE.md);
+  opencodeSkills = pkgs.runCommand "opencode-skills" { } ''
+    mkdir -p "$out"
+    cp -r ${../opencode/skills}/. "$out"
+  '';
   opencodeGitConfig = pkgs.writeText "opencode-gitconfig" ''
     [credential]
         helper = !${pkgs.gh}/bin/gh auth git-credential
@@ -14,6 +18,7 @@ let
   opencodeConfig = pkgs.writeText "opencode.json" (builtins.toJSON (baseOpencodeConfig // {
     instructions = baseOpencodeConfig.instructions ++ [ terseInstructions ];
     plugin = [ "file://${rtkPlugin}" ];
+    skills.paths = [ opencodeSkills ];
   }));
 in
 {

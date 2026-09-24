@@ -221,6 +221,10 @@ commands before execution. Credential-like files are denied through OpenCode's
 `read` permission rules; shell commands require explicit approval so they cannot
 bypass that policy with another file-reading program.
 
+Add declarative OpenCode skills under `opencode/skills/<name>/SKILL.md`. The
+NixOS service copies that folder to the Nix store and loads it through
+`skills.paths` on its next restart.
+
 ## How it behaves in a cloud session
 
 Verified against a live session: `$HOME` is `/root`, `~/.claude` is the config
