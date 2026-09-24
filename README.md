@@ -190,6 +190,11 @@ continues to run as the separate, non-admin `opencode` user. Do not put an SSH
 public key in this public repository. Provision it through Azure or a private
 host module before first SSH login.
 
+`opencode` has Bash as its account shell solely because OpenCode's terminal
+tool invokes the service user's login shell. It remains a system account with
+no SSH key, no sudo rights, no capabilities, and the service sandbox described
+above.
+
 `/srv/workspace` is shared by `buster` and `opencode`; it appears as
 `~/workspace` when logged in as `buster` and as `~/workspace` in OpenCode's
 web UI through a service-private bind mount. The setgid workspace directory

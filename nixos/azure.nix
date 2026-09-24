@@ -33,6 +33,7 @@ in
     group = "workspace";
     home = "/var/lib/opencode";
     createHome = true;
+    shell = pkgs.bashInteractive;
   };
 
   systemd.tmpfiles.rules = [
