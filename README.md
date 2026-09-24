@@ -210,6 +210,11 @@ sudo -u opencode -H env HOME=/var/lib/opencode gh auth login
 The OpenCode token is stored only under `/var/lib/opencode`; it is not exposed
 to the SSH administrator account.
 
+The OpenCode service rewrites GitHub SSH-style remote URLs such as
+`git@github.com:owner/repo.git` to HTTPS and obtains credentials with its
+separate `gh auth login` token. This avoids storing an SSH private key in the
+service account while preserving standard GitHub clone URLs.
+
 OpenCode uses the repository's `opencode/TERSE.md` as a declarative instruction
 file. RTK is installed from nixpkgs and its OpenCode plugin rewrites shell
 commands before execution. Credential-like files are denied through OpenCode's

@@ -3,6 +3,13 @@
 let
   rtkPlugin = pkgs.writeText "rtk.ts" (builtins.readFile ../opencode/plugins/rtk.ts);
   terseInstructions = pkgs.writeText "TERSE.md" (builtins.readFile ../opencode/TERSE.md);
+  opencodeGitConfig = pkgs.writeText "opencode-gitconfig" ''
+    [credential]
+        helper = !${pkgs.gh}/bin/gh auth git-credential
+    [url "https://github.com/"]
+        insteadOf = git@github.com:
+        insteadOf = ssh://git@github.com/
+  '';
   baseOpencodeConfig = builtins.fromJSON (builtins.readFile ../opencode/opencode.json);
   opencodeConfig = pkgs.writeText "opencode.json" (builtins.toJSON (baseOpencodeConfig // {
     instructions = baseOpencodeConfig.instructions ++ [ terseInstructions ];
@@ -54,7 +61,7 @@ in
     wantedBy = [ "multi-user.target" ];
     wants = [ "network-online.target" "tailscaled.service" ];
     after = [ "network-online.target" "tailscaled.service" ];
-    path = [ pkgs.git pkgs.gh pkgs.rtk ];
+    path = [ pkgs.git pkgs.gh pkgs.openssh pkgs.rtk ];
 
     serviceConfig = {
       Type = "simple";
@@ -65,6 +72,7 @@ in
         "HOME=/var/lib/opencode"
         "XDG_CONFIG_HOME=/var/lib/opencode/.config"
         "OPENCODE_CONFIG=${opencodeConfig}"
+        "GIT_CONFIG_GLOBAL=${opencodeGitConfig}"
       ];
       ExecStart = "${pkgs.opencode}/bin/opencode serve --hostname 127.0.0.1 --port 8080";
       Restart = "always";
@@ -114,5 +122,5 @@ in
     };
   };
 
-  environment.systemPackages = [ pkgs.git pkgs.gh pkgs.opencode pkgs.rtk ];
+  environment.systemPackages = [ pkgs.git pkgs.gh pkgs.openssh pkgs.opencode pkgs.rtk ];
 }
