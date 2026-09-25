@@ -225,6 +225,52 @@ Add declarative OpenCode skills under `opencode/skills/<name>/SKILL.md`. The
 NixOS service copies that folder to the Nix store and loads it through
 `skills.paths` on its next restart.
 
+#### Claude Code Remote Control
+
+The NixOS host also runs Claude Code itself as `claude-code-remote.service`,
+under a separate non-admin `claude` system user, so sessions on the VM can be
+driven from [claude.ai/code](https://claude.ai/code) and the Claude mobile and
+desktop apps with a Claude Pro, Max, Team, or Enterprise subscription. It uses
+`claude remote-control` (server mode) rather than OpenCode: Anthropic's terms
+do not allow subscription OAuth tokens in third-party tools, and Remote Control
+refuses API keys and `claude setup-token` tokens.
+
+Remote Control makes only outbound HTTPS connections, so it needs no listening
+port and no Tailscale Serve entry. The service:
+
+- runs `claude remote-control --name <hostname>` from the same shared
+  `/srv/workspace`, visible to the service as `~/workspace`;
+- installs this repository's `claude/` tree (settings, `CLAUDE.md`, the Terse
+  output style, hooks, commands, and skills) plus `opencode/skills` into
+  `/var/lib/claude-code/.claude` on every start, leaving credentials, sessions,
+  and history in place;
+- runs inside a tmux session because first-run prompts need a terminal;
+- is skipped at boot until `/var/lib/claude-code/.claude/.credentials.json`
+  exists.
+
+One-time setup after `nixos-rebuild switch`:
+
+```bash
+# Sign in with your Claude subscription (prints a URL; paste the code back).
+sudo -u claude -H claude auth login
+# Accept the workspace trust prompt, then /exit.
+sudo -u claude -H bash -c 'cd ~/workspace && claude'
+sudo -u claude -H gh auth login
+sudo systemctl restart claude-code-remote.service
+# Answer "Enable Remote Control?" once, then detach with Ctrl-b d.
+sudo -u claude tmux -S /run/claude-code/tmux.sock attach
+```
+
+The environment appears in claude.ai/code and the Claude app under the VM's
+host name. Tool permission prompts are answered from there. Logs:
+`journalctl -u claude-code-remote`; live output: the tmux attach command
+above.
+
+The `claude-code` package comes from nixpkgs, which disables Claude Code's
+self-updater; update it with the flake's `nixpkgs` input. It is the only
+unfree package allowed on the host. OpenCode stays installed for other
+providers.
+
 ## How it behaves in a cloud session
 
 Verified against a live session: `$HOME` is `/root`, `~/.claude` is the config
